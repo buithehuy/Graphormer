@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 #!/usr/bin/env bash
 
+export PYTHONUNBUFFERED=1
+
 CUDA_VISIBLE_DEVICES=0 fairseq-train \
 --user-dir ../../graphormer \
 --num-workers 2 \
