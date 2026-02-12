@@ -20,7 +20,7 @@ CUDA_VISIBLE_DEVICES=0 fairseq-train \
 --warmup-updates 100 \
 --total-num-update 1000 \
 --lr 2e-4 --end-learning-rate 1e-9 \
---batch-size 16 \
+--batch-size 32 \
 --fp16 \
 --data-buffer-size 20 \
 --encoder-layers 12 \
