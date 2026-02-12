@@ -29,3 +29,7 @@ CUDA_VISIBLE_DEVICES=0 fairseq-train \
 --encoder-attention-heads 8 \
 --max-epoch 1 \
 --save-dir ./ckpts_test
+
+--log-format simple \
+--log-interval 1 \
+--fixed-validation-seed 7
