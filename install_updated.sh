@@ -15,6 +15,7 @@ pip install torch-sparse==0.6.12 -f https://pytorch-geometric.com/whl/torch-1.9.
 pip install torch-geometric==1.7.2
 pip install tensorboardX==2.4.1
 
+pip install "numpy==1.23.5"
 pip install tensorboard "protobuf<3.20"
 pip install "setuptools<58.0.0"
 
