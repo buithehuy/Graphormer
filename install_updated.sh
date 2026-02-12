@@ -17,6 +17,7 @@ pip install tensorboardX==2.4.1
 
 pip install tensorboard "protobuf<3.20"
 pip install "setuptools<58.0.0"
+pip install googledrivedownloader
 
 pip install ogb==1.3.2
 pip install rdkit-pypi==2021.9.3
