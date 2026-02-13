@@ -1,21 +1,21 @@
 """
-Rice Diseases Graph Dataset
+Rice Diseases Graph Dataset - PyTorch Geometric Format
 
-Custom dataset for rice disease classification using graph representations.
-Compatible with Graphormer fairseq framework.
+Custom PyG dataset for rice disease classification using graph representations.
+Saves each graph as individual .pt file for fairseq compatibility.
 """
 
 import os
+import os.path as osp
 import torch
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
-import pickle
 import numpy as np
-from torch_geometric.data import Data
-from sklearn.model_selection import train_test_split
+from torch_geometric.data import Dataset, Data
+import zipfile
+import json
 
-from graphormer.data import register_dataset
 from .rice_image_to_graph import ImageToGraphConverter
 
 
@@ -24,79 +24,205 @@ CLASS_NAMES = ['BrownSpot', 'Healthy', 'Hispa', 'LeafBlast']
 CLASS_TO_IDX = {name: idx for idx, name in enumerate(CLASS_NAMES)}
 
 
-class RiceDiseasesGraphDataset:
+class RiceDiseasesDataset(Dataset):
     """
-    Dataset for rice disease images converted to graphs.
+    PyTorch Geometric Dataset for rice disease images converted to graphs.
+    
+    Each graph is saved as a separate .pt file in the processed directory.
+    Compatible with Graphormer fairseq framework.
     
     Args:
-        data_dir: Root directory containing the dataset
-        cache_dir: Directory to cache preprocessed graphs
+        root: Root directory where dataset is stored
+        image_dir: Directory containing the rice disease images
+        split: 'train', 'val', or 'test'
         n_segments: Number of superpixels for graph conversion
-        force_reprocess: If True, reprocess even if cache exists
-        use_labelled: If True, use LabelledRice/Labelled structure
-                     If False, use RiceDiseaseDataset/train+validation
-        seed: Random seed for train/val/test split
+        transform: Optional transform to apply to graphs
+        pre_transform: Optional pre-transform
+        pre_filter: Optional pre-filter
+        force_process: If True, reprocess even if processed files exist
     """
     
     def __init__(
         self,
-        data_dir="/content/rice_diseases_data",
-        cache_dir="/content/rice_diseases_graphs",
+        root,
+        image_dir=None,
+        split='train',
         n_segments=75,
-        force_reprocess=False,
-        use_labelled=True,
+        transform=None,
+        pre_transform=None,
+        pre_filter=None,
+        force_process=False,
         seed=42
     ):
-        self.data_dir = data_dir
-        self.cache_dir = cache_dir
+        self.image_dir = image_dir
+        self.split = split
         self.n_segments = n_segments
-        self.force_reprocess = force_reprocess
-        self.use_labelled = use_labelled
         self.seed = seed
+        self._force_process = force_process
         
-        # Create cache directory
-        os.makedirs(cache_dir, exist_ok=True)
+        super().__init__(root, transform, pre_transform, pre_filter)
+        
+        # Load split indices
+        split_path = osp.join(self.processed_dir, 'split_indices.pt')
+        if osp.exists(split_path):
+            splits = torch.load(split_path)
+            self.data_indices = splits[f'{split}_idx']
+        else:
+            # If no splits exist yet, use all data
+            self.data_indices = torch.arange(len(self.processed_file_names))
+    
+    @property
+    def raw_file_names(self):
+        """
+        List of raw file names. We don't have raw files since images
+        are processed from external directory.
+        """
+        return []
+    
+    @property
+    def processed_file_names(self):
+        """
+        List of processed file names. Returns list of data_*.pt files.
+        """
+        # Check if metadata exists
+        metadata_path = osp.join(self.processed_dir, 'metadata.json')
+        if osp.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            num_graphs = metadata['num_graphs']
+            return [f'data_{i}.pt' for i in range(num_graphs)]
+        else:
+            # During first processing, return empty list
+            return []
+    
+    def download(self):
+        """
+        Download method (not used - data is copied from Google Drive manually).
+        """
+        if self.image_dir is None:
+            print("Note: Images should be copied from Google Drive manually.")
+            print("Use colab_setup.copy_and_extract_dataset() first.")
+        pass
+    
+    def process(self):
+        """
+        Process all images and save each graph as individual .pt file.
+        
+        This method processes images one at a time to avoid RAM overflow.
+        Each graph is saved immediately and deleted from memory.
+        """
+        if not self._force_process and len(self.processed_file_names) > 0:
+            print("Processed files already exist. Set force_process=True to reprocess.")
+            return
+        
+        if self.image_dir is None:
+            raise ValueError(
+                "image_dir must be provided for processing. "
+                "Please set it when creating the dataset."
+            )
+        
+        print("=" * 60)
+        print("Processing rice disease images to graphs...")
+        print("=" * 60)
+        
+        # Find all images
+        data_dict = self._find_images()
         
         # Initialize converter
-        self.converter = ImageToGraphConverter(n_segments=n_segments)
+        converter = ImageToGraphConverter(n_segments=self.n_segments)
         
-        # Load or process dataset
-        self.graphs, self.labels, self.image_paths = self._load_or_process_dataset()
+        # Process each image and save immediately
+        all_labels = []
+        all_image_paths = []
+        graph_idx = 0
+        
+        for class_name in CLASS_NAMES:
+            class_idx = CLASS_TO_IDX[class_name]
+            image_paths = data_dict[class_name]
+            
+            print(f"\nProcessing {class_name} ({len(image_paths)} images)...")
+            
+            for img_path in tqdm(image_paths, desc=f"  {class_name}"):
+                try:
+                    # Load and convert image
+                    image = Image.open(img_path).convert('RGB')
+                    graph = converter.convert(image, label=class_idx)
+                    
+                    # Save immediately to disk
+                    save_path = osp.join(self.processed_dir, f'data_{graph_idx}.pt')
+                    torch.save(graph, save_path)
+                    
+                    # Track metadata
+                    all_labels.append(class_idx)
+                    all_image_paths.append(img_path)
+                    
+                    graph_idx += 1
+                    
+                    # Explicitly delete to free RAM
+                    del image
+                    del graph
+                
+                except Exception as e:
+                    print(f"    Warning: Failed to process {img_path}: {e}")
+                    continue
+        
+        print(f"\n✓ Processed {graph_idx} graphs")
         
         # Create train/val/test splits
-        self.train_idx, self.valid_idx, self.test_idx = self._create_splits()
-    
-    def _find_dataset_structure(self):
-        """
-        Automatically find the dataset structure.
+        print("\nCreating train/val/test splits...")
+        train_idx, val_idx, test_idx = self._create_splits(graph_idx, all_labels)
         
-        Returns:
-            dict: {class_name: list of image paths}
-        """
+        # Save splits
+        split_path = osp.join(self.processed_dir, 'split_indices.pt')
+        torch.save({
+            'train_idx': train_idx,
+            'val_idx': val_idx,
+            'test_idx': test_idx
+        }, split_path)
+        print(f"  Saved splits to: {split_path}")
+        
+        # Save metadata
+        metadata = {
+            'num_graphs': graph_idx,
+            'class_names': CLASS_NAMES,
+            'n_segments': self.n_segments,
+            'labels': all_labels,
+            'image_paths': all_image_paths,
+            'num_train': len(train_idx),
+            'num_val': len(val_idx),
+            'num_test': len(test_idx)
+        }
+        
+        metadata_path = osp.join(self.processed_dir, 'metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        print(f"  Saved metadata to: {metadata_path}")
+        
+        print("\n" + "=" * 60)
+        print("Processing complete!")
+        print("=" * 60)
+    
+    def _find_images(self):
+        """Find all images in the image directory."""
         data_dict = {class_name: [] for class_name in CLASS_NAMES}
         
-        if self.use_labelled:
-            # Look for LabelledRice/Labelled structure
-            labelled_dir = Path(self.data_dir) / "LabelledRice" / "Labelled"
-            
-            if not labelled_dir.exists():
-                # Try without LabelledRice prefix
-                labelled_dir = Path(self.data_dir) / "Labelled"
-            
-            if labelled_dir.exists():
-                for class_name in CLASS_NAMES:
-                    class_dir = labelled_dir / class_name
-                    if class_dir.exists():
-                        images = list(class_dir.glob("*.jpg")) + \
-                                list(class_dir.glob("*.jpeg")) + \
-                                list(class_dir.glob("*.png"))
-                        data_dict[class_name] = [str(p) for p in images]
+        # Try LabelledRice/Labelled structure
+        labelled_dir = Path(self.image_dir) / "LabelledRice" / "Labelled"
+        if not labelled_dir.exists():
+            labelled_dir = Path(self.image_dir) / "Labelled"
+        
+        if labelled_dir.exists():
+            for class_name in CLASS_NAMES:
+                class_dir = labelled_dir / class_name
+                if class_dir.exists():
+                    images = list(class_dir.glob("*.jpg")) + \
+                            list(class_dir.glob("*.jpeg")) + \
+                            list(class_dir.glob("*.png"))
+                    data_dict[class_name] = [str(p) for p in images]
         else:
-            # Use RiceDiseaseDataset/train and validation structure
-            train_dir = Path(self.data_dir) / "RiceDiseaseDataset" / "train"
-            val_dir = Path(self.data_dir) / "RiceDiseaseDataset" / "validation"
-            
-            for split_dir in [train_dir, val_dir]:
+            # Try RiceDiseaseDataset structure
+            for split_name in ['train', 'validation']:
+                split_dir = Path(self.image_dir) / "RiceDiseaseDataset" / split_name
                 if split_dir.exists():
                     for class_name in CLASS_NAMES:
                         class_dir = split_dir / class_name
@@ -108,206 +234,141 @@ class RiceDiseasesGraphDataset:
         
         return data_dict
     
-    def _load_or_process_dataset(self):
-        """
-        Load preprocessed graphs from cache or process images.
+    def _create_splits(self, num_graphs, labels):
+        """Create stratified train/val/test splits."""
+        from sklearn.model_selection import train_test_split
         
-        Returns:
-            graphs: list of PyG Data objects
-            labels: list of integer labels
-            image_paths: list of image file paths
-        """
-        cache_file = Path(self.cache_dir) / f"processed_graphs_n{self.n_segments}.pkl"
+        indices = np.arange(num_graphs)
+        labels_np = np.array(labels)
         
-        # Try to load from cache
-        if cache_file.exists() and not self.force_reprocess:
-            print(f"Loading preprocessed graphs from cache: {cache_file}")
-            with open(cache_file, 'rb') as f:
-                data = pickle.load(f)
-            
-            print(f"✓ Loaded {len(data['graphs'])} graphs from cache")
-            return data['graphs'], data['labels'], data['image_paths']
-        
-        # Process images
-        print(f"Processing images to graphs (n_segments={self.n_segments})...")
-        
-        data_dict = self._find_dataset_structure()
-        
-        graphs = []
-        labels = []
-        image_paths = []
-        
-        for class_name in CLASS_NAMES:
-            class_idx = CLASS_TO_IDX[class_name]
-            class_images = data_dict[class_name]
-            
-            print(f"\nProcessing {class_name} ({len(class_images)} images)...")
-            
-            for img_path in tqdm(class_images, desc=f"  {class_name}"):
-                try:
-                    # Load image
-                    image = Image.open(img_path).convert('RGB')
-                    
-                    # Convert to graph
-                    graph = self.converter.convert(image, label=class_idx)
-                    
-                    graphs.append(graph)
-                    labels.append(class_idx)
-                    image_paths.append(img_path)
-                
-                except Exception as e:
-                    print(f"    Warning: Failed to process {img_path}: {e}")
-                    continue
-        
-        print(f"\n✓ Processed {len(graphs)} graphs total")
-        
-        # Save to cache
-        print(f"Saving to cache: {cache_file}")
-        with open(cache_file, 'wb') as f:
-            pickle.dump({
-                'graphs': graphs,
-                'labels': labels,
-                'image_paths': image_paths,
-                'class_names': CLASS_NAMES,
-                'n_segments': self.n_segments
-            }, f)
-        
-        print("✓ Cache saved")
-        
-        return graphs, labels, image_paths
-    
-    def _create_splits(self):
-        """
-        Create train/val/test splits.
-        
-        If use_labelled=False, uses existing train/val structure:
-        - All train images -> train
-        - 50% validation images -> validation
-        - 50% validation images -> test
-        
-        If use_labelled=True, creates new split:
-        - 70% -> train
-        - 15% -> validation
-        - 15% -> test
-        
-        Returns:
-            train_idx, valid_idx, test_idx: numpy arrays of indices
-        """
-        n_samples = len(self.graphs)
-        indices = np.arange(n_samples)
-        
-        if not self.use_labelled:
-            # Split based on existing train/val structure
-            # This requires tracking which came from train vs val
-            # For now, do stratified split
-            pass
-        
-        # Stratified split by class
-        labels_np = np.array(self.labels)
-        
-        # First split: 70% train, 30% temp
+        # 70% train, 30% temp
         train_idx, temp_idx = train_test_split(
-            indices,
-            test_size=0.3,
-            stratify=labels_np,
-            random_state=self.seed
+            indices, test_size=0.3, stratify=labels_np, random_state=self.seed
         )
         
-        # Second split: split temp into 50% val, 50% test
+        # Split temp into 50% val, 50% test
         temp_labels = labels_np[temp_idx]
         val_idx, test_idx = train_test_split(
-            temp_idx,
-            test_size=0.5,
-            stratify=temp_labels,
-            random_state=self.seed
+            temp_idx, test_size=0.5, stratify=temp_labels, random_state=self.seed
         )
         
-        print(f"\nDataset split:")
         print(f"  Train: {len(train_idx)} samples")
-        print(f"  Valid: {len(val_idx)} samples")
+        print(f"  Val:   {len(val_idx)} samples")
         print(f"  Test:  {len(test_idx)} samples")
         
-        return train_idx, val_idx, test_idx
+        return (
+            torch.from_numpy(train_idx),
+            torch.from_numpy(val_idx),
+            torch.from_numpy(test_idx)
+        )
     
-    def __len__(self):
-        return len(self.graphs)
+    def len(self):
+        """Return the number of graphs in this split."""
+        return len(self.data_indices)
     
-    def __getitem__(self, idx):
-        return self.graphs[idx]
+    def get(self, idx):
+        """
+        Load and return a single graph.
+        
+        Args:
+            idx: Index within the current split
+        
+        Returns:
+            PyG Data object
+        """
+        # Map split index to global index
+        global_idx = self.data_indices[idx].item()
+        
+        # Load graph from disk
+        data_path = osp.join(self.processed_dir, f'data_{global_idx}.pt')
+        data = torch.load(data_path)
+        
+        return data
     
     @property
     def num_classes(self):
+        """Number of disease classes."""
         return len(CLASS_NAMES)
+
+
+def create_dataset_zip(processed_dir, output_zip_path):
+    """
+    Create a zip archive of all processed .pt files.
     
-    @property
-    def train_data(self):
-        return [self.graphs[i] for i in self.train_idx]
+    Args:
+        processed_dir: Directory containing processed .pt files
+        output_zip_path: Path for output zip file
     
-    @property
-    def valid_data(self):
-        return [self.graphs[i] for i in self.valid_idx]
+    Returns:
+        output_zip_path: Path to created zip file
+    """
+    print(f"\nCreating zip archive: {output_zip_path}")
+    print("-" * 60)
     
-    @property
-    def test_data(self):
-        return [self.graphs[i] for i in self.test_idx]
+    with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        pt_files = list(Path(processed_dir).glob("*.pt"))
+        json_files = list(Path(processed_dir).glob("*.json"))
+        
+        files_to_zip = pt_files + json_files
+        
+        for file_path in tqdm(files_to_zip, desc="Compressing"):
+            arcname = file_path.name
+            zipf.write(file_path, arcname)
+    
+    # Get zip file size
+    zip_size_mb = Path(output_zip_path).stat().st_size / (1024 * 1024)
+    
+    print("-" * 60)
+    print(f"✓ Zip archive created successfully!")
+    print(f"  Location: {output_zip_path}")
+    print(f"  Size: {zip_size_mb:.2f} MB")
+    print(f"  Files: {len(files_to_zip)}")
+    
+    return output_zip_path
+
+
+# For backward compatibility with fairseq registration
+from graphormer.data import register_dataset
+from graphormer.data.pyg_datasets import GraphormerPYGDataset
 
 
 @register_dataset("rice_diseases")
-def create_rice_diseases_dataset(
-    data_dir="/content/rice_diseases_data",
-    cache_dir="/content/rice_diseases_graphs",
-    n_segments=75,
-    seed=42
-):
+def create_rice_diseases_dataset(root="/content/rice_diseases_graphs", seed=42):
     """
-    Create rice diseases graph dataset compatible with Graphormer.
+    Create rice diseases dataset for Graphormer/fairseq.
     
-    This function can be called by fairseq with --dataset-name rice_diseases
+    This function is called by fairseq when using --dataset-name rice_diseases.
+    
+    Args:
+        root: Root directory containing processed graphs
+        seed: Random seed (not used, splits are pre-determined)
     
     Returns:
-        dict with keys:
-            - dataset: RiceDiseasesGraphDataset object
-            - train_idx: training indices
-            - valid_idx: validation indices
-            - test_idx: test indices
-            - source: "pyg" (PyTorch Geometric)
+        GraphormerPYGDataset compatible with fairseq
     """
-    dataset = RiceDiseasesGraphDataset(
-        data_dir=data_dir,
-        cache_dir=cache_dir,
-        n_segments=n_segments,
-        seed=seed
-    )
+    train_set = RiceDiseasesDataset(root=root, split='train')
+    valid_set = RiceDiseasesDataset(root=root, split='val')
+    test_set = RiceDiseasesDataset(root=root, split='test')
     
-    return {
-        "dataset": dataset,
-        "train_idx": dataset.train_idx,
-        "valid_idx": dataset.valid_idx,
-        "test_idx": dataset.test_idx,
-        "source": "pyg",
-        "num_classes": dataset.num_classes
-    }
+    return GraphormerPYGDataset(
+        None, seed, None, None, None,
+        train_set, valid_set, test_set
+    )
 
 
 if __name__ == "__main__":
-    # Example usage
-    print("Creating Rice Diseases Graph Dataset...")
-    
-    dataset = RiceDiseasesGraphDataset(
-        data_dir="/content/rice_diseases_data",
-        cache_dir="/content/rice_diseases_graphs"
-    )
-    
-    print(f"\nDataset created successfully!")
-    print(f"  Total samples: {len(dataset)}")
-    print(f"  Number of classes: {dataset.num_classes}")
-    print(f"  Class names: {CLASS_NAMES}")
-    
-    # Show sample graph
-    sample_graph = dataset[0]
-    print(f"\nSample graph structure:")
-    print(f"  Nodes: {sample_graph.x.shape[0]}")
-    print(f"  Edges: {sample_graph.edge_index.shape[1]}")
-    print(f"  Node features: {sample_graph.x.shape}")
-    print(f"  Edge features: {sample_graph.edge_attr.shape}")
-    print(f"  Label: {sample_graph.y.item()} ({CLASS_NAMES[sample_graph.y.item()]})")
+    print("Rice Diseases Dataset - PyTorch Geometric Format")
+    print("\nUsage:")
+    print("  # Process images and create dataset")
+    print("  dataset = RiceDiseasesDataset(")
+    print("      root='/content/rice_diseases_graphs',")
+    print("      image_dir='/content/rice_diseases_data',")
+    print("      split='train',")
+    print("      n_segments=75,")
+    print("      force_process=True  # Set to False after first processing")
+    print("  )")
+    print("\n  # Create zip archive")
+    print("  create_dataset_zip(")
+    print("      '/content/rice_diseases_graphs/processed',")
+    print("      '/content/rice_diseases_graphs.zip'")
+    print("  )")

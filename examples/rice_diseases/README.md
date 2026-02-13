@@ -1,130 +1,93 @@
 # Rice Diseases Image-to-Graph Conversion
 
-This module converts rice disease images to graph structures using superpixel segmentation (SLIC algorithm), making them compatible with Microsoft's Graphormer fairseq framework for graph neural network training.
+This module converts rice disease images to graph structures using superpixel segmentation (SLIC algorithm), compatible with Microsoft's Graphormer fairseq framework.
 
 ## Overview
 
 **Input**: Rice disease images (4 classes: BrownSpot, Healthy, Hispa, LeafBlast)  
-**Output**: Graph structures where:
+**Output**: Individual .pt files + zip archive (PyTorch Geometric format, fairseq-compatible)
+
+**Graph Structure**:
 - **Nodes**: Superpixels with RGB color features
 - **Edges**: Adjacency between neighboring superpixels  
-- **Edge Features**: Color differences between adjacent superpixels
-- **Graph Labels**: Disease class (0-3)
+- **Edge Features**: Color differences
+- **Labels**: Disease class (0-3)
 
-## Dataset Structure
-
-The dataset should be organized as follows:
+## Dataset Format (PyTorch Geometric)
 
 ```
-rice-diseases-image-dataset/
-├── LabelledRice/
-│   └── Labelled/
-│       ├── BrownSpot/
-│       ├── Healthy/
-│       ├── Hispa/
-│       └── LeafBlast/
-└── RiceDiseaseDataset/
-    ├── train/
-    └── validation/
+rice_diseases_graphs/
+├── processed/
+│   ├── data_0.pt          # Individual graph files
+│   ├── data_1.pt
+│   ├── ...
+│   ├── data_N.pt
+│   ├── split_indices.pt   # Train/val/test indices
+│   └── metadata.json      # Dataset metadata
+└── rice_diseases_graphs.zip  # Complete archive
 ```
 
-## Installation & Setup (Google Colab)
+## Quick Start (Google Colab)
 
-### Step 1: Mount Google Drive
+### 1. Setup
 
 ```python
 from google.colab import drive
 drive.mount('/content/drive')
-```
 
-### Step 2: Clone Graphormer Repository
-
-```bash
 !git clone https://github.com/microsoft/Graphormer.git
 %cd Graphormer
-```
-
-### Step 3: Install Dependencies
-
-```bash
-# Install fairseq and Graphormer
 !bash install_updated.sh
-
-# Install rice_diseases specific dependencies
 !pip install -r examples/rice_diseases/requirements.txt
 ```
 
-### Step 4: Copy and Extract Dataset
+### 2. Process Dataset
+
+Run the notebook **`rice_diseases_convert_data.ipynb`** or use Python:
 
 ```python
-import sys
-sys.path.append('/content/Graphormer')
-
 from examples.rice_diseases.colab_setup import copy_and_extract_dataset
+from examples.rice_diseases.rice_diseases_dataset import RiceDiseasesDataset, create_dataset_zip
 
-# Copy from Drive and extract to local storage
+# Copy and extract images
 data_dir = copy_and_extract_dataset(
     drive_zip_path="MyDrive/Rice_Diseases_Dataset/rice-diseases-image-dataset.zip",
     extract_dir="/content/rice_diseases_data"
 )
-```
 
-## Usage
-
-### Convert Images to Graphs
-
-```python
-from examples.rice_diseases.rice_diseases_dataset import RiceDiseasesGraphDataset
-
-# Create dataset (this will process and cache graphs)
-dataset = RiceDiseasesGraphDataset(
-    data_dir="/content/rice_diseases_data",
-    cache_dir="/content/rice_diseases_graphs",
-    n_segments=75,  # Number of superpixels
-    force_reprocess=False,  # Set True to reprocess even if cache exists
-    use_labelled=True,  # Use LabelledRice/Labelled structure
-    seed=42
+# Process images → save as .pt files
+dataset = RiceDiseasesDataset(
+    root="/content/rice_diseases_graphs",
+    image_dir=data_dir,
+    n_segments=75,
+    force_process=True  # First run only
 )
 
-print(f"Dataset created: {len(dataset)} samples")
-print(f"Train: {len(dataset.train_idx)}, Val: {len(dataset.valid_idx)}, Test: {len(dataset.test_idx)}")
+# Create zip archive
+create_dataset_zip(
+    processed_dir="/content/rice_diseases_graphs/processed",
+    output_zip_path="/content/rice_diseases_graphs.zip"
+)
 ```
 
-**Note**: The first run will process all images and save to cache. Subsequent runs will load from cache (much faster).
+**Note**: Processing is RAM-efficient - each graph is saved and deleted immediately.
 
-### Generate Visualizations
+### 3. Train with Graphormer
 
-```python
-from examples.rice_diseases.visualize_graphs import (
-    create_sample_visualizations,
-    plot_dataset_statistics
-)
-
-# Create sample visualizations (2 per class)
-create_sample_visualizations(
-    dataset,
-    output_dir="/content/Graphormer/examples/rice_diseases/visualizations",
-    samples_per_class=2
-)
-
-# Plot dataset statistics
-fig = plot_dataset_statistics(dataset, save_path="dataset_stats.png")
+```bash
+cd /content/Graphormer/examples/rice_diseases
+bash rice_diseases.sh
 ```
 
-### Use with Graphormer/Fairseq Training
-
-The dataset is registered as `"rice_diseases"` and can be used directly with fairseq training scripts:
+Or use fairseq-train directly:
 
 ```bash
 fairseq-train \
   --user-dir ../../graphormer \
-  --num-workers 2 \
-  --ddp-backend=legacy_ddp \
   --dataset-name rice_diseases \
   --dataset-source pyg \
   --task graph_prediction \
   --criterion multiclass_cross_entropy \
-  --arch graphormer_base \
   --num-classes 4 \
   --batch-size 32 \
   ...
@@ -134,74 +97,158 @@ fairseq-train \
 
 ```
 examples/rice_diseases/
-├── rice_image_to_graph.py       # Core image-to-graph converter (SLIC)
-├── rice_diseases_dataset.py     # Dataset wrapper with caching
-├── colab_setup.py               # Colab utilities (Drive copy, extraction)
-├── visualize_graphs.py          # Visualization utilities
-├── requirements.txt             # Python dependencies
-├── README.md                    # This file
-└── rice_diseases_convert_data.ipynb  # Main notebook for data conversion
+├── rice_image_to_graph.py           # SLIC superpixel converter
+├── rice_diseases_dataset.py         # PyG Dataset class
+├── colab_setup.py                   # Drive utilities
+├── visualize_graphs.py              # Visualization tools
+├── rice_diseases_convert_data.ipynb # Main notebook
+├── rice_diseases.sh                 # Training script
+├── requirements.txt
+└── README.md
+```
+
+## Key Features
+
+### RAM-Efficient Processing
+
+The `process()` method processes images **one-by-one**:
+
+```python
+# DON'T do this (loads all in memory):
+# graphs = [convert(img) for img in images]
+
+# DO this (saves and deletes immediately):
+for i, img_path in enumerate(image_paths):
+    graph = converter.convert(image)
+    torch.save(graph, f'data_{i}.pt')
+    del graph  # Free RAM
+```
+
+### PyTorch Geometric Compatible
+
+```python
+class RiceDiseasesDataset(Dataset):  # Inherits from PyG Dataset
+    def process(self):
+        # Save individual .pt files
+        ...
+    
+    def get(self, idx):
+        # Load single graph from disk
+        data = torch.load(f'data_{idx}.pt')
+        return data
+```
+
+### Fairseq Integration
+
+Dataset is registered and loaded automatically:
+
+```python
+@register_dataset("rice_diseases")
+def create_rice_diseases_dataset(root, seed):
+    train_set = RiceDiseasesDataset(root=root, split='train')
+    valid_set = RiceDiseasesDataset(root=root, split='val')
+    test_set = RiceDiseasesDataset(root=root, split='test')
+    return GraphormerPYGDataset(None, seed, None, None, None,
+                                train_set, valid_set, test_set)
 ```
 
 ## Dataset Statistics
 
-- **4 classes**: BrownSpot, Healthy, Hispa, LeafBlast
-- **Split**: 70% train, 15% validation, 15% test (stratified by class)
-- **Graph size**: ~50-100 nodes per graph (depending on `n_segments` parameter)
+- **4 classes**: BrownSpot (0), Healthy (1), Hispa (2), LeafBlast (3)
+- **Split**: 70% train / 15% val / 15% test (stratified)
+- **Graphs**: ~50-100 nodes per graph (75 superpixels default)
+- **Node features**: RGB color (3D)
+- **Edge features**: Color difference (1D)
 
-## Graph Structure Details
+## Files Created
 
-Each image is converted to a graph using the following process:
+After processing, you'll have:
 
-1. **Superpixel Segmentation**: SLIC algorithm generates ~75 superpixels per image
-2. **Node Features**: 3D RGB color (mean color of each superpixel)
-3. **Edge Creation**: Superpixels that share a boundary are connected
-4. **Edge Features**: Euclidean distance between RGB colors of connected superpixels
+1. **Individual .pt files**: One per graph in `processed/`
+2. **split_indices.pt**: Train/val/test split information
+3. **metadata.json**: Dataset metadata (labels, paths, stats)
+4. **rice_diseases_graphs.zip**: Complete archive (~50-200 MB)
 
-## Caching System
+## Usage Examples
 
-Processed graphs are cached to disk to avoid reprocessing:
+### Load Dataset for Training
 
-- **Cache location**: `/content/rice_diseases_graphs/`
-- **Cache file**: `processed_graphs_n75.pkl` (n depends on `n_segments`)
-- **Reprocessing**: Set `force_reprocess=True` to regenerate cache
+```python
+from examples.rice_diseases.rice_diseases_dataset import RiceDiseasesDataset
+
+# Load specific split
+train_data = RiceDiseasesDataset(root="/content/rice_diseases_graphs", split='train')
+val_data = RiceDiseasesDataset(root="/content/rice_diseases_graphs", split='val')
+
+# Access samples
+sample = train_data[0]
+print(f"Nodes: {sample.x.shape[0]}")
+print(f"Edges: {sample.edge_index.shape[1]}")
+print(f"Label: {sample.y.item()}")
+```
+
+### Generate Visualizations
+
+```python
+from examples.rice_diseases.visualize_graphs import visualize_image_to_graph
+from examples.rice_diseases.rice_image_to_graph import ImageToGraphConverter
+
+converter = ImageToGraphConverter(n_segments=75)
+fig = visualize_image_to_graph(
+    image_path="path/to/image.jpg",
+    converter=converter,
+    save_path="visualization.png"
+)
+```
 
 ## Troubleshooting
 
-### RAM Overflow on Colab
+### RAM Overflow
 
-- **Symptom**: Colab crashes during dataset extraction
-- **Solution**: The `copy_and_extract_dataset()` function copies the zip from Drive to local `/tmp` first, then extracts. This avoids Drive RAM issues.
+**Symptom**: Colab crashes during processing  
+**Solution**: The implementation already handles this by processing one image at a time. If still crashes, reduce `n_segments` to create smaller graphs.
 
-### Missing Dataset
+### Dataset Not Found
 
-- **Symptom**: `FileNotFoundError` when running setup
-- **Solution**: Ensure the zip file is at `MyDrive/Rice_Diseases_Dataset/rice-diseases-image-dataset.zip` in your Google Drive
+**Symptom**: `FileNotFoundError` when loading dataset  
+**Solution**: Ensure you've run processing first with `force_process=True`.
 
-### Slow First Run
+### Fairseq Can't Find Dataset
 
-- **Symptom**: First dataset creation takes a long time
-- **Solution**: This is expected - the module processes all images and converts to graphs. Subsequent runs will load from cache and be much faster.
+**Symptom**: Error when running `fairseq-train`  
+**Solution**: Make sure:
+- Dataset root is `/content/rice_diseases_graphs`
+- `processed/` directory contains `.pt` files
+- Use `--dataset-name rice_diseases --dataset-source pyg`
 
-### Import Errors
+## Training Script Parameters
 
-- **Symptom**: `ModuleNotFoundError` for various packages
-- **Solution**: Ensure all dependencies are installed:
-  ```bash
-  !pip install -r examples/rice_diseases/requirements.txt
-  ```
+The `rice_diseases.sh` script is pre-configured for this dataset:
 
-## Next Steps: Training with Graphormer
+- **Architecture**: `graphormer_base` (12 layers, 128 embedding dim)
+- **Batch size**: 32
+- **Learning rate**: 2e-4 with polynomial decay
+- **Epochs**: 100 (with early stopping patience=20)
+- **Loss**: multiclass_cross_entropy (4-class classification)
 
-After converting the dataset, you can train a Graphormer model for rice disease classification. Example training script coming soon.
+Adjust parameters in `rice_diseases.sh` as needed.
+
+## Next Steps
+
+1. ✅ Process images (run notebook)
+2. ✅ Create zip archive
+3. ✅ Train model (`bash rice_diseases.sh`)
+4. Evaluate on test set
+5. Fine-tune hyperparameters
 
 ## Citation
 
-If you use this dataset conversion module, please cite:
+If using this module:
 
-1. **Graphormer**: Original Graphormer paper
-2. **Rice Diseases Dataset**: Kaggle dataset by minhhuy2810
+1. **Graphormer**: Cite the Graphormer paper
+2. **Rice Diseases Dataset**: Credit Kaggle dataset (minhhuy2810)
+3. **SLIC Algorithm**: Cite scikit-image
 
 ## License
 
-This module follows the same license as the Graphormer repository (MIT License).
+MIT License (same as Graphormer repository)
