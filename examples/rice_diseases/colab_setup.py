@@ -130,7 +130,6 @@ def verify_installation():
         ('PIL', 'Pillow'),
         ('skimage', 'scikit-image'),
         ('torch', 'PyTorch'),
-        ('torch_geometric', 'PyTorch Geometric'),
         ('networkx', 'NetworkX'),
         ('matplotlib', 'Matplotlib'),
         ('tqdm', 'tqdm'),
@@ -145,6 +144,14 @@ def verify_installation():
         except ImportError:
             print(f"✗ {display_name:20s} - MISSING")
             all_installed = False
+    
+    # Special check for PyTorch Geometric (check torch_geometric.data)
+    try:
+        from torch_geometric.data import Data
+        print(f"✓ {'PyTorch Geometric':20s} - OK")
+    except ImportError:
+        print(f"✗ {'PyTorch Geometric':20s} - MISSING")
+        all_installed = False
     
     print("-" * 40)
     
