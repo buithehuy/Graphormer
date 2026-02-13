@@ -160,6 +160,9 @@ class ImageToGraphConverter:
                 - edge_attr: edge features (num_edges, 1)
                 - y: graph label (optional)
         """
+        target_size = (224, 224)  # Giảm từ ví dụ 512x512
+        if image.size != target_size:
+            image = image.resize(target_size, Image.Resampling.LANCZOS)
         # Extract superpixels
         segments, n_segments = self.extract_superpixels(image)
         
