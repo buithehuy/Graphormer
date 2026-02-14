@@ -6,7 +6,7 @@
 # Dataset: 4 classes (BrownSpot, Healthy, Hispa, LeafBlast)
 # Preprocessed graphs stored as individual .pt files
 
-# export PYTHONPATH=/content/Graphormer:$PYTHONPATH
+export PYTHONPATH=/content/Graphormer:$PYTHONPATH
 # # Import dataset registration trước khi train
 # python -c "from examples.rice_diseases.rice_diseases_dataset import create_rice_diseases_dataset"
 
