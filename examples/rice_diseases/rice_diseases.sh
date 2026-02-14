@@ -7,7 +7,7 @@
 # Preprocessed graphs stored as individual .pt files
 
 # Add paths for imports
-# export PYTHONPATH=/content/Graphormer:/content/Graphormer/examples:$PYTHONPATH
+export PYTHONPATH=/content/Graphormer:/content/Graphormer/examples:$PYTHONPATH
 
 
 
