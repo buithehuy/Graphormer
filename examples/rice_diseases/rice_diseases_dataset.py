@@ -333,7 +333,7 @@ from graphormer.data.pyg_datasets import GraphormerPYGDataset
 
 
 @register_dataset("rice_diseases")
-def create_rice_diseases_dataset(root="/content/rice_diseases_graphs", seed=42):
+def create_rice_diseases_dataset(root="/content/Graphormer/examples/rice_diseases/rice_diseases_graphs", seed=42):
     """
     Create rice diseases dataset for Graphormer/fairseq.
     
