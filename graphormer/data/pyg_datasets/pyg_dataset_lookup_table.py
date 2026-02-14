@@ -7,6 +7,18 @@ from torch_geometric.data import Dataset
 from .pyg_dataset import GraphormerPYGDataset
 import torch.distributed as dist
 
+# Import custom datasets
+try:
+    import sys
+    import os
+    # Add examples path to import rice_diseases
+    examples_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'examples')
+    if examples_path not in sys.path:
+        sys.path.insert(0, examples_path)
+    from rice_diseases.rice_diseases_dataset import RiceDiseasesDataset
+except ImportError:
+    RiceDiseasesDataset = None
+
 
 class MyQM7b(QM7b):
     def download(self):
@@ -98,6 +110,23 @@ class PYGDatasetLookupTable:
                 if name == "name":
                     nm = value
             inner_dataset = MyMoleculeNet(root=root, name=nm)
+        elif name == "rice_diseases":
+            # Custom rice diseases dataset
+            if RiceDiseasesDataset is None:
+                raise ImportError("RiceDiseasesDataset not found. Make sure examples/rice_diseases is in path.")
+            
+            # Get root from params or use default
+            rice_root = "/content/Graphormer/examples/rice_diseases/rice_diseases_graphs"
+            for param in params:
+                if "=" in param:
+                    pname, value = param.split("=")
+                    if pname == "root":
+                        rice_root = value
+            
+            # Create train/val/test splits like ZINC
+            train_set = RiceDiseasesDataset(root=rice_root, split='train')
+            valid_set = RiceDiseasesDataset(root=rice_root, split='val')
+            test_set = RiceDiseasesDataset(root=rice_root, split='test')
         else:
             raise ValueError(f"Unknown dataset name {name} for pyg source.")
         if train_set is not None:
