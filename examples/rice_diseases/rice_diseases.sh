@@ -19,7 +19,6 @@ CUDA_VISIBLE_DEVICES=0 fairseq-train \
 --dataset-source pyg \
 --task graph_prediction \
 --criterion multiclass_cross_entropy \
---class-weights \"[1.91, 1.0, 1.78, 1.52]\" \
 --arch graphormer_base \
 --num-classes 4 \
 --attention-dropout 0.1 --act-dropout 0.1 --dropout 0.1 \
