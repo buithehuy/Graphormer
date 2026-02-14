@@ -121,27 +121,37 @@ class ImageToGraphConverter:
         
         return node_features
     
-    def compute_edge_features(self, node_features, edge_index):
+    def compute_edge_features(self, node_features, edge_index, n_bins=10):
         """
-        Compute edge features as color difference between adjacent superpixels.
+        Compute edge features as quantized color difference bins.
         
         Args:
             node_features: numpy array (n_segments, 3)
             edge_index: numpy array (2, num_edges)
+            n_bins: number of bins to quantize edge features into
         
         Returns:
-            edge_features: numpy array (num_edges, 1) with L2 color distances
+            edge_features: numpy array (num_edges,) with integer bin indices
         """
         num_edges = edge_index.shape[1]
-        edge_features = np.zeros((num_edges, 1), dtype=np.float32)
+        edge_distances = np.zeros(num_edges, dtype=np.float32)
         
+        # Compute actual distances first
         for i in range(num_edges):
             src, dst = edge_index[0, i], edge_index[1, i]
             color_diff = distance.euclidean(
                 node_features[src], 
                 node_features[dst]
             )
-            edge_features[i, 0] = color_diff
+            edge_distances[i] = color_diff
+        
+        # Quantize into bins (convert to integer edge types)
+        # Max possible RGB distance is sqrt(3) ≈ 1.732
+        max_dist = np.sqrt(3.0)
+        # Bin edges: [0, max_dist/n_bins, 2*max_dist/n_bins, ..., max_dist]
+        edge_features = np.digitize(edge_distances, 
+                                     bins=np.linspace(0, max_dist, n_bins+1)) - 1
+        edge_features = np.clip(edge_features, 0, n_bins-1).astype(np.int64)
         
         return edge_features
     
@@ -180,13 +190,13 @@ class ImageToGraphConverter:
         
         edge_index = np.array(edge_list, dtype=np.int64).T
         
-        # Compute edge features
+        # Compute edge features (now returns integers)
         edge_features = self.compute_edge_features(node_features, edge_index)
         
         # Convert to PyTorch tensors
         x = torch.tensor(node_features, dtype=torch.float)
         edge_index = torch.tensor(edge_index, dtype=torch.long)
-        edge_attr = torch.tensor(edge_features, dtype=torch.float)
+        edge_attr = torch.tensor(edge_features, dtype=torch.long)  # Changed to long!
         
         # Create PyG Data object
         data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
