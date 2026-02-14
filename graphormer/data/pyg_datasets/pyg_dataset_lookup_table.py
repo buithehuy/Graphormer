@@ -8,16 +8,36 @@ from .pyg_dataset import GraphormerPYGDataset
 import torch.distributed as dist
 
 # Import custom datasets
+RiceDiseasesDataset = None
 try:
-    import sys
-    import os
-    # Add examples path to import rice_diseases
-    examples_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'examples')
-    if examples_path not in sys.path:
-        sys.path.insert(0, examples_path)
-    from rice_diseases.rice_diseases_dataset import RiceDiseasesDataset
+    # Strategy 1: Direct import if in path
+    from examples.rice_diseases.rice_diseases_dataset import RiceDiseasesDataset
 except ImportError:
-    RiceDiseasesDataset = None
+    try:
+        # Strategy 2: Add absolute path based on graphormer location
+        import sys
+        import os
+        # Get Graphormer root (3 levels up from this file)
+        graphormer_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        examples_path = os.path.join(graphormer_root, 'examples')
+        
+        if os.path.exists(examples_path) and examples_path not in sys.path:
+            sys.path.insert(0, examples_path)
+        
+        from rice_diseases.rice_diseases_dataset import RiceDiseasesDataset
+    except ImportError:
+        # Strategy 3: Try without examples prefix
+        try:
+            import sys
+            import os
+            rice_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'examples', 'rice_diseases'))
+            if os.path.exists(rice_path) and rice_path not in sys.path:
+                sys.path.insert(0, rice_path)
+            
+            from rice_diseases_dataset import RiceDiseasesDataset
+        except ImportError:
+            pass  # RiceDiseasesDataset remains None
+
 
 
 class MyQM7b(QM7b):
