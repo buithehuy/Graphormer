@@ -9,17 +9,6 @@
 # Add paths for imports
 export PYTHONPATH=/content/Graphormer:/content/Graphormer/examples:$PYTHONPATH
 
-# Test import before training
-echo "Testing RiceDiseasesDataset import..."
-python -c "
-import sys
-sys.path.insert(0, '/content/Graphormer/examples')
-from rice_diseases.rice_diseases_dataset import RiceDiseasesDataset
-print('✓ RiceDiseasesDataset imported successfully')
-"
-
-echo "PYTHONPATH: $PYTHONPATH"
-
 
 
 CUDA_VISIBLE_DEVICES=0 fairseq-train \
