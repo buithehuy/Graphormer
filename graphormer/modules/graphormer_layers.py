@@ -35,6 +35,10 @@ class GraphNodeFeature(nn.Module):
 
         # 1 for graph token
         self.atom_encoder = nn.Embedding(num_atoms + 1, hidden_dim, padding_idx=0)
+        
+        # Added support for continuous features (RGB)
+        self.atom_proj = nn.Linear(3, hidden_dim)
+        
         self.in_degree_encoder = nn.Embedding(num_in_degree, hidden_dim, padding_idx=0)
         self.out_degree_encoder = nn.Embedding(
             num_out_degree, hidden_dim, padding_idx=0
@@ -53,7 +57,14 @@ class GraphNodeFeature(nn.Module):
         n_graph, n_node = x.size()[:2]
 
         # node feauture + graph token
-        node_feature = self.atom_encoder(x).sum(dim=-2)  # [n_graph, n_node, n_hidden]
+        if x.is_floating_point():
+            # Continuous features (e.g. RGB)
+            # x shape: [n_graph, n_node, 3]
+            node_feature = self.atom_proj(x)
+        else:
+            # Discrete features (e.g. atoms)
+            # x shape: [n_graph, n_node, 1] usually
+            node_feature = self.atom_encoder(x).sum(dim=-2)  # [n_graph, n_node, n_hidden]
 
         # if self.flag and perturb is not None:
         #     node_feature += perturb
