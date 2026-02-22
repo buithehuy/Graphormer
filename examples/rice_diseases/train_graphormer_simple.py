@@ -57,7 +57,7 @@ class PTGraphDataset(Dataset):
         return len(self.files)
 
     def __getitem__(self, idx):
-        data = torch.load(self.files[idx], weights_only=False)
+        data = torch.load(self.files[idx])
         return data
 
 
