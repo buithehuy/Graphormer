@@ -57,6 +57,49 @@ def preprocess_item(item):
     return item
 
 
+def preprocess_item_float(item):
+    """
+    Variant of preprocess_item for continuous (float) node features (e.g. RGB).
+
+    Key difference: x is passed through as-is — convert_to_single_emb is NOT
+    called on x, because that function is designed for discrete integer atom
+    features and would corrupt float values by adding large offsets (+1, +513, +1025).
+    edge_attr is still treated as integer/long (spatial info) and handled normally.
+    """
+    edge_attr, edge_index, x = item.edge_attr, item.edge_index, item.x
+    N = x.size(0)
+    # x stays as float [N, C] — no convert_to_single_emb
+
+    # node adj matrix [N, N] bool
+    adj = torch.zeros([N, N], dtype=torch.bool)
+    adj[edge_index[0, :], edge_index[1, :]] = True
+
+    # edge feature (still discrete → keep convert_to_single_emb)
+    if len(edge_attr.size()) == 1:
+        edge_attr = edge_attr[:, None]
+    attn_edge_type = torch.zeros([N, N, edge_attr.size(-1)], dtype=torch.long)
+    attn_edge_type[edge_index[0, :], edge_index[1, :]] = (
+        convert_to_single_emb(edge_attr) + 1
+    )
+
+    shortest_path_result, path = algos.floyd_warshall(adj.numpy())
+    max_dist = np.amax(shortest_path_result)
+    edge_input = algos.gen_edge_input(max_dist, path, attn_edge_type.numpy())
+    spatial_pos = torch.from_numpy(shortest_path_result).long()
+    attn_bias = torch.zeros([N + 1, N + 1], dtype=torch.float)  # with graph token
+
+    # combine
+    item.x = x  # float unchanged
+    item.attn_bias = attn_bias
+    item.attn_edge_type = attn_edge_type
+    item.spatial_pos = spatial_pos
+    item.in_degree = adj.long().sum(dim=1).view(-1)
+    item.out_degree = item.in_degree  # undirected graph
+    item.edge_input = torch.from_numpy(edge_input).long()
+
+    return item
+
+
 class MyPygPCQM4MDataset(PygPCQM4Mv2Dataset):
     def download(self):
         super(MyPygPCQM4MDataset, self).download()

@@ -328,29 +328,51 @@ def create_dataset_zip(processed_dir, output_zip_path):
 
 
 # For backward compatibility with fairseq registration
+from functools import lru_cache
+
 from graphormer.data import register_dataset
 from graphormer.data.pyg_datasets import GraphormerPYGDataset
+from graphormer.data.wrapper import preprocess_item_float
+
+
+class RiceDiseasesGraphormerDataset(GraphormerPYGDataset):
+    """
+    Subclass of GraphormerPYGDataset that uses preprocess_item_float instead of
+    preprocess_item. This is critical for RGB float node features — the default
+    preprocess_item calls convert_to_single_emb which adds integer offsets
+    (+1, +513, +1025) to x, completely corrupting continuous float values.
+    """
+
+    @lru_cache(maxsize=16)
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            item = self.dataset[idx]
+            item.idx = idx
+            item.y = item.y.reshape(-1)
+            return preprocess_item_float(item)   # ← uses float-safe preprocessing
+        else:
+            raise TypeError("index to a RiceDiseasesGraphormerDataset can only be an integer.")
 
 
 @register_dataset("rice_diseases")
 def create_rice_diseases_dataset(root="/content/Graphormer/examples/rice_diseases/rice_diseases_graphs", seed=42):
     """
     Create rice diseases dataset for Graphormer/fairseq.
-    
+
     This function is called by fairseq when using --dataset-name rice_diseases.
-    
+
     Args:
         root: Root directory containing processed graphs
         seed: Random seed (not used, splits are pre-determined)
-    
+
     Returns:
-        GraphormerPYGDataset compatible with fairseq
+        RiceDiseasesGraphormerDataset compatible with fairseq (uses float preprocessing)
     """
     train_set = RiceDiseasesDataset(root=root, split='train')
     valid_set = RiceDiseasesDataset(root=root, split='val')
-    test_set = RiceDiseasesDataset(root=root, split='test')
-    
-    return GraphormerPYGDataset(
+    test_set  = RiceDiseasesDataset(root=root, split='test')
+
+    return RiceDiseasesGraphormerDataset(
         None, seed, None, None, None,
         train_set, valid_set, test_set
     )
