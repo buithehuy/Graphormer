@@ -412,7 +412,7 @@ def inspect_data(data_dir):
 
     label_counts = [0] * 4
     for i, f in enumerate(files[:5]):
-        data = torch.load(f, weights_only=False)
+        data = torch.load(f)
         label = data.y.item() if data.y is not None else -1
         print(f"\n  [{f.name}]")
         print(f"    x shape      : {data.x.shape}")
