@@ -64,3 +64,34 @@ class RiceDiseasesDatasetWrapper(Dataset):
         global_idx = self.data_indices[idx].item()
         data_path = osp.join(self.processed_dir, f'data_{global_idx}.pt')
         return torch.load(data_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Float-safe Graphormer dataset wrapper for RGB node features
+# ─────────────────────────────────────────────────────────────────────────────
+
+from functools import lru_cache
+from graphormer.data.pyg_datasets.pyg_dataset import GraphormerPYGDataset
+from graphormer.data.wrapper import preprocess_item_float
+
+
+class RiceDiseasesGraphormerDataset(GraphormerPYGDataset):
+    """
+    Subclass of GraphormerPYGDataset that uses preprocess_item_float.
+
+    The default GraphormerPYGDataset.__getitem__ calls preprocess_item which
+    runs convert_to_single_emb(x), adding integer offsets (+1, +513, +1025)
+    to the RGB float features — completely corrupting them.
+    This subclass bypasses that by using preprocess_item_float instead.
+    """
+
+    @lru_cache(maxsize=16)
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            item = self.dataset[idx]
+            item.idx = idx
+            item.y = item.y.reshape(-1)
+            return preprocess_item_float(item)  # float-safe: no convert_to_single_emb on x
+        else:
+            raise TypeError("index to a RiceDiseasesGraphormerDataset can only be an integer.")
+

@@ -10,8 +10,10 @@ import torch.distributed as dist
 # Import custom datasets
 try:
     from .rice_diseases_wrapper import RiceDiseasesDatasetWrapper as RiceDiseasesDataset
+    from .rice_diseases_wrapper import RiceDiseasesGraphormerDataset
 except ImportError:
     RiceDiseasesDataset = None
+    RiceDiseasesGraphormerDataset = None
 
 
 
@@ -126,7 +128,9 @@ class PYGDatasetLookupTable:
         else:
             raise ValueError(f"Unknown dataset name {name} for pyg source.")
         if train_set is not None:
-            return GraphormerPYGDataset(
+            # For rice_diseases: use float-safe subclass to avoid converting RGB features
+            dataset_cls = RiceDiseasesGraphormerDataset if name == "rice_diseases" and RiceDiseasesGraphormerDataset is not None else GraphormerPYGDataset
+            return dataset_cls(
                     None,
                     seed,
                     None,
