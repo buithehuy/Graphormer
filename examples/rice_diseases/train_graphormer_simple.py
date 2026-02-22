@@ -423,7 +423,7 @@ def inspect_data(data_dir):
     # Count labels
     print("\nCounting labels across all files ...")
     for f in files:
-        data = torch.load(f, weights_only=False)
+        data = torch.load(f)
         if data.y is not None:
             label_counts[data.y.item()] += 1
     print("\nClass distribution:")
@@ -434,7 +434,7 @@ def inspect_data(data_dir):
     # Check splits
     split_path = Path(data_dir) / "split_indices.pt"
     if split_path.exists():
-        splits = torch.load(split_path, weights_only=False)
+        splits = torch.load(split_path)
         print(f"\nSplit file found: {split_path}")
         for k, v in splits.items():
             print(f"  {k}: {len(v)} samples")
@@ -484,7 +484,7 @@ def main():
     split_path = args.split_file or str(Path(args.data_dir) / "split_indices.pt")
     if os.path.exists(split_path):
         print(f"\nUsing existing splits from: {split_path}")
-        splits = torch.load(split_path, weights_only=False)
+        splits = torch.load(split_path)
         train_idx = splits['train_idx'].tolist()
         val_idx   = splits['val_idx'].tolist()
         test_idx  = splits['test_idx'].tolist()
