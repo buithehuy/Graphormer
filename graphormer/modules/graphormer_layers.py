@@ -34,7 +34,7 @@ class GraphNodeFeature(nn.Module):
         self.num_atoms = num_atoms
 
         # Encoder for continuous node features (e.g. RGB float [N, 3])
-        self.atom_encoder = nn.Linear(3, hidden_dim)
+        self.atom_encoder = nn.Linear(5, hidden_dim)
         
         self.in_degree_encoder = nn.Embedding(num_in_degree, hidden_dim, padding_idx=0)
         self.out_degree_encoder = nn.Embedding(

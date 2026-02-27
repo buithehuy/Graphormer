@@ -2,7 +2,9 @@
 Image to Graph Converter using Superpixel Segmentation (SLIC Algorithm)
 
 This module converts images to graph structures where:
-- Nodes are superpixels with RGB color features
+- Nodes are superpixels with 5 features: [R, G, B, cx, cy]
+    - R, G, B : mean colour of the superpixel (float in [0, 1])
+    - cx, cy  : normalised centroid of the superpixel (float in [0, 1])
 - Edges connect adjacent superpixels
 - Edge features are color differences between adjacent superpixels
 """
@@ -96,29 +98,43 @@ class ImageToGraphConverter:
     
     def compute_node_features(self, image, segments, n_segments):
         """
-        Compute node features as mean RGB color of each superpixel.
-        
+        Compute node features combining mean RGB colour and normalised centroid.
+
         Args:
             image: PIL Image or numpy array (H, W, 3)
             segments: numpy array (H, W) with segment labels
             n_segments: number of segments
-        
+
         Returns:
-            node_features: numpy array (n_segments, 3) with RGB features
+            node_features: numpy array (n_segments, 5) with features
+                           [R, G, B, cx, cy] where (cx, cy) are normalised
+                           centroid coordinates in [0, 1].
         """
         if isinstance(image, Image.Image):
             image = np.array(image)
-        
+
         # Ensure float representation
         image = img_as_float(image)
-        
-        node_features = np.zeros((n_segments, 3), dtype=np.float32)
-        
+        h, w = segments.shape
+
+        # --- colour features (3 dims) ---
+        colour_features = np.zeros((n_segments, 3), dtype=np.float32)
         for seg_id in range(n_segments):
             mask = segments == seg_id
             if mask.sum() > 0:
-                node_features[seg_id] = image[mask].mean(axis=0)
-        
+                colour_features[seg_id] = image[mask].mean(axis=0)
+
+        # --- positional features: normalised centroid (2 dims) ---
+        pos_features = np.zeros((n_segments, 2), dtype=np.float32)
+        props = regionprops(segments + 1)  # regionprops requires labels >= 1
+        for prop in props:
+            seg_id = prop.label - 1  # convert back to 0-based
+            cy_px, cx_px = prop.centroid  # (row, col) → (y, x)
+            pos_features[seg_id, 0] = cx_px / (w - 1)  # normalise to [0, 1]
+            pos_features[seg_id, 1] = cy_px / (h - 1)
+
+        # Concatenate: [R, G, B, cx, cy]
+        node_features = np.concatenate([colour_features, pos_features], axis=1)
         return node_features
     
     def compute_edge_features(self, node_features, edge_index, n_bins=10):
@@ -158,52 +174,55 @@ class ImageToGraphConverter:
     def convert(self, image, label=None):
         """
         Convert an image to a graph structure.
-        
+
         Args:
             image: PIL Image or numpy array
             label: Optional label for the graph
-        
+
         Returns:
             data: PyTorch Geometric Data object with:
-                - x: node features (n_nodes, 3)
+                - x         : node features (n_nodes, 5) — [R, G, B, cx, cy]
+                - pos       : normalised centroid coordinates (n_nodes, 2) — [cx, cy]
                 - edge_index: edge connectivity (2, num_edges)
-                - edge_attr: edge features (num_edges, 1)
-                - y: graph label (optional)
+                - edge_attr : edge features (num_edges,) as integer bin indices
+                - y         : graph label (optional)
         """
-        target_size = (224, 224)  # Giảm từ ví dụ 512x512
+        target_size = (224, 224)
         if image.size != target_size:
             image = image.resize(target_size, Image.Resampling.LANCZOS)
+
         # Extract superpixels
         segments, n_segments = self.extract_superpixels(image)
-        
+
         # Build adjacency
         adjacency = self.build_adjacency(segments)
-        
-        # Compute node features
+
+        # Compute node features: [R, G, B, cx, cy]
         node_features = self.compute_node_features(image, segments, n_segments)
-        
+
         # Build edge index
         edge_list = []
         for src in adjacency:
             for dst in adjacency[src]:
                 edge_list.append([src, dst])
-        
+
         edge_index = np.array(edge_list, dtype=np.int64).T
-        
-        # Compute edge features (now returns integers)
-        edge_features = self.compute_edge_features(node_features, edge_index)
-        
+
+        # Compute edge features using only RGB part for colour distance
+        edge_features = self.compute_edge_features(node_features[:, :3], edge_index)
+
         # Convert to PyTorch tensors
-        x = torch.tensor(node_features, dtype=torch.float)
+        x = torch.tensor(node_features, dtype=torch.float)          # (N, 5)
+        pos = torch.tensor(node_features[:, 3:], dtype=torch.float) # (N, 2) cx, cy
         edge_index = torch.tensor(edge_index, dtype=torch.long)
-        edge_attr = torch.tensor(edge_features, dtype=torch.long)  # Changed to long!
-        
-        # Create PyG Data object
-        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-        
+        edge_attr = torch.tensor(edge_features, dtype=torch.long)
+
+        # Create PyG Data object — store pos separately for convenience
+        data = Data(x=x, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
+
         if label is not None:
             data.y = torch.tensor([label], dtype=torch.long)
-        
+
         return data
     
     def get_segmentation_mask(self, image):
