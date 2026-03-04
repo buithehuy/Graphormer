@@ -90,6 +90,7 @@ def preprocess_item_float(item):
 
     # combine
     item.x = x  # float unchanged
+    item.num_nodes = N  # store actual node count for correct padding mask
     item.attn_bias = attn_bias
     item.attn_edge_type = attn_edge_type
     item.spatial_pos = spatial_pos

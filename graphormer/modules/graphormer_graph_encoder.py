@@ -201,7 +201,18 @@ class GraphormerGraphEncoder(nn.Module):
         # compute padding mask. This is needed for multi-head attention
         data_x = batched_data["x"]
         n_graph, n_node = data_x.size()[:2]
-        padding_mask = (data_x[:, :, 0]).eq(0)  # B x T x 1
+
+        if "num_nodes" in batched_data and batched_data["num_nodes"] is not None:
+            # Float node features (e.g. RGB superpixels): use real node count.
+            # Checking data_x[:,:,0]==0 is WRONG here because dark pixels have R≈0
+            # and would be falsely treated as padding.
+            num_nodes = batched_data["num_nodes"].to(data_x.device)  # [B]
+            padding_mask = (
+                torch.arange(n_node, device=data_x.device).unsqueeze(0) >= num_nodes.unsqueeze(1)
+            )  # True where node slot is padding
+        else:
+            # Original behaviour for integer atom-feature datasets (OGB, ZINC, …)
+            padding_mask = (data_x[:, :, 0]).eq(0)  # B x T
         padding_mask_cls = torch.zeros(
             n_graph, 1, device=padding_mask.device, dtype=padding_mask.dtype
         )

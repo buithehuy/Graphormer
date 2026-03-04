@@ -24,6 +24,16 @@ def pad_2d_unsqueeze(x, padlen):
     return x.unsqueeze(0)
 
 
+def pad_2d_float_unsqueeze(x, padlen):
+    """Float-safe version: does NOT add +1 offset (which would corrupt RGB/centroid features)."""
+    xlen, xdim = x.size()
+    if xlen < padlen:
+        new_x = x.new_zeros([padlen, xdim], dtype=x.dtype)
+        new_x[:xlen, :] = x
+        x = new_x
+    return x.unsqueeze(0)
+
+
 def pad_attn_bias_unsqueeze(x, padlen):
     xlen = x.size(0)
     if xlen < padlen:
@@ -76,6 +86,7 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
             item.x,
             item.edge_input[:, :, :multi_hop_max_dist, :],
             item.y,
+            getattr(item, "num_nodes", item.x.size(0)),  # real node count for float features
         )
         for item in items
     ]
@@ -89,6 +100,7 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         xs,
         edge_inputs,
         ys,
+        num_nodes_list,
     ) = zip(*items)
 
     for idx, _ in enumerate(attn_biases):
@@ -96,7 +108,12 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
     max_node_num = max(i.size(0) for i in xs)
     max_dist = max(i.size(-2) for i in edge_inputs)
     y = torch.cat(ys)
-    x = torch.cat([pad_2d_unsqueeze(i, max_node_num) for i in xs])
+    # Use float-safe padding for x (no +1 offset — features are float RGB+centroid in [0,1])
+    is_float_x = xs[0].dtype == torch.float32 or xs[0].dtype == torch.float16
+    if is_float_x:
+        x = torch.cat([pad_2d_float_unsqueeze(i, max_node_num) for i in xs])
+    else:
+        x = torch.cat([pad_2d_unsqueeze(i, max_node_num) for i in xs])
     edge_input = torch.cat(
         [pad_3d_unsqueeze(i, max_node_num, max_node_num, max_dist) for i in edge_inputs]
     )
@@ -121,4 +138,5 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         x=x,
         edge_input=edge_input,
         y=y,
+        num_nodes=torch.tensor(num_nodes_list, dtype=torch.long),  # real node counts
     )
