@@ -16,6 +16,7 @@ from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq.modules.quant_noise import quant_noise
 
 from .multihead_attention import MultiheadAttention
+from .activations import get_activation_fn as custom_get_activation_fn
 
 
 class GraphormerGraphEncoderLayer(nn.Module):
@@ -55,7 +56,7 @@ class GraphormerGraphEncoderLayer(nn.Module):
         )
 
         # Initialize blocks
-        self.activation_fn = utils.get_activation_fn(activation_fn)
+        self.activation_fn = custom_get_activation_fn(activation_fn)
         self.self_attn = self.build_self_attention(
             self.embedding_dim,
             num_attention_heads,

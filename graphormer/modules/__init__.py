@@ -5,3 +5,4 @@ from .multihead_attention import MultiheadAttention
 from .graphormer_layers import GraphNodeFeature, GraphAttnBias
 from .graphormer_graph_encoder_layer import GraphormerGraphEncoderLayer
 from .graphormer_graph_encoder import GraphormerGraphEncoder, init_graphormer_params
+from .activations import get_activation_fn, get_available_activation_fns

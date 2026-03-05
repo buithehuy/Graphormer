@@ -24,6 +24,7 @@ from fairseq.modules import (
 from fairseq.utils import safe_hasattr
 
 from ..modules import init_graphormer_params, GraphormerGraphEncoder
+from ..modules.activations import get_activation_fn, get_available_activation_fns
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class GraphormerModel(FairseqEncoderModel):
         # misc params
         parser.add_argument(
             "--activation-fn",
-            choices=utils.get_available_activation_fns(),
+            choices=get_available_activation_fns(),
             help="activation function to use",
         )
         parser.add_argument(
@@ -195,7 +196,7 @@ class GraphormerEncoder(FairseqEncoder):
         self.lm_head_transform_weight = nn.Linear(
             args.encoder_embed_dim, args.encoder_embed_dim
         )
-        self.activation_fn = utils.get_activation_fn(args.activation_fn)
+        self.activation_fn = get_activation_fn(args.activation_fn)
         self.layer_norm = LayerNorm(args.encoder_embed_dim)
 
         self.lm_output_learned_bias = None
