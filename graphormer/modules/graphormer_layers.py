@@ -27,14 +27,15 @@ class GraphNodeFeature(nn.Module):
     """
 
     def __init__(
-        self, num_heads, num_atoms, num_in_degree, num_out_degree, hidden_dim, n_layers
+        self, num_heads, num_atoms, num_in_degree, num_out_degree, hidden_dim, n_layers,
+        num_atom_features=5,
     ):
         super(GraphNodeFeature, self).__init__()
         self.num_heads = num_heads
         self.num_atoms = num_atoms
 
-        # Encoder for continuous node features (e.g. RGB float [N, 3])
-        self.atom_encoder = nn.Linear(5, hidden_dim)
+        # Encoder for continuous node features (5-dim legacy or 128-dim CNN)
+        self.atom_encoder = nn.Linear(num_atom_features, hidden_dim)
         
         self.in_degree_encoder = nn.Embedding(num_in_degree, hidden_dim, padding_idx=0)
         self.out_degree_encoder = nn.Embedding(

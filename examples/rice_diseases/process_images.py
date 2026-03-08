@@ -191,6 +191,7 @@ def process_images_to_graphs(
     seed=42,
     augment=False,
     target_count=0,
+    use_cnn_features=False,
 ):
     """
     Process all images and save as individual .pt files.
@@ -231,7 +232,14 @@ def process_images_to_graphs(
             print(f"    {c:12s}: {n:5d}  →  {min(n, target_count) + extra:5d}  (+{extra}  augmented)")
 
     # Initialize converter
-    converter = ImageToGraphConverter(n_segments=n_segments)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    converter = ImageToGraphConverter(
+        n_segments=n_segments,
+        use_cnn_features=use_cnn_features,
+        device=device,
+    )
+    if use_cnn_features:
+        print(f"  CNN feature extraction: ON (device={device})")
 
     # Process each image (original + augmented)
     all_labels = []
@@ -417,6 +425,10 @@ def main():
             'Default 0 = use the size of the largest class.'
         )
     )
+    parser.add_argument(
+        '--use_cnn', action='store_true',
+        help='Use CNN (ResNet18) features instead of raw RGB (5→128 dims per node)'
+    )
 
     args = parser.parse_args()
 
@@ -428,6 +440,7 @@ def main():
         args.seed,
         augment=args.augment,
         target_count=args.target_count,
+        use_cnn_features=args.use_cnn,
     )
 
     # Create zip if requested

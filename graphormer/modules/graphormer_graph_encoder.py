@@ -53,6 +53,7 @@ class GraphormerGraphEncoder(nn.Module):
         num_edge_dis: int,
         edge_type: str,
         multi_hop_max_dist: int,
+        num_atom_features: int = 5,
         num_encoder_layers: int = 12,
         embedding_dim: int = 768,
         ffn_embedding_dim: int = 768,
@@ -90,6 +91,7 @@ class GraphormerGraphEncoder(nn.Module):
             num_out_degree=num_out_degree,
             hidden_dim=embedding_dim,
             n_layers=num_encoder_layers,
+            num_atom_features=num_atom_features,
         )
 
         self.graph_attn_bias = GraphAttnBias(

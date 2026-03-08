@@ -30,10 +30,18 @@ class ImageToGraphConverter:
         sigma (float): Gaussian smoothing parameter before segmentation
     """
     
-    def __init__(self, n_segments=75, compactness=10, sigma=1):
+    def __init__(self, n_segments=75, compactness=10, sigma=1,
+                 use_cnn_features=False, cnn_feature_dim=128, device='cpu'):
         self.n_segments = n_segments
         self.compactness = compactness
         self.sigma = sigma
+        self.use_cnn_features = use_cnn_features
+
+        if use_cnn_features:
+            from cnn_feature_extractor import CNNFeatureExtractor
+            self.cnn_extractor = CNNFeatureExtractor(
+                feature_dim=cnn_feature_dim, device=device
+            )
     
     def extract_superpixels(self, image):
         """
@@ -181,7 +189,7 @@ class ImageToGraphConverter:
 
         Returns:
             data: PyTorch Geometric Data object with:
-                - x         : node features (n_nodes, 5) — [R, G, B, cx, cy]
+                - x         : node features (n_nodes, D) — D=128 (CNN) or D=5 (legacy)
                 - pos       : normalised centroid coordinates (n_nodes, 2) — [cx, cy]
                 - edge_index: edge connectivity (2, num_edges)
                 - edge_attr : edge features (num_edges,) as integer bin indices
@@ -197,8 +205,15 @@ class ImageToGraphConverter:
         # Build adjacency
         adjacency = self.build_adjacency(segments)
 
-        # Compute node features: [R, G, B, cx, cy]
-        node_features = self.compute_node_features(image, segments, n_segments)
+        # Compute raw node features (always needed for edge features & pos)
+        raw_node_features = self.compute_node_features(image, segments, n_segments)
+
+        if self.use_cnn_features:
+            # CNN features: [N, cnn_feature_dim]
+            x = self.cnn_extractor.extract_features(image, segments, n_segments)
+        else:
+            # Legacy: [R, G, B, cx, cy] = 5-dim
+            x = torch.tensor(raw_node_features, dtype=torch.float)
 
         # Build edge index
         edge_list = []
@@ -208,16 +223,15 @@ class ImageToGraphConverter:
 
         edge_index = np.array(edge_list, dtype=np.int64).T
 
-        # Compute edge features using only RGB part for colour distance
-        edge_features = self.compute_edge_features(node_features[:, :3], edge_index)
+        # Compute edge features using raw RGB colour distance (always from raw features)
+        edge_features = self.compute_edge_features(raw_node_features[:, :3], edge_index)
 
         # Convert to PyTorch tensors
-        x = torch.tensor(node_features, dtype=torch.float)          # (N, 5)
-        pos = torch.tensor(node_features[:, 3:], dtype=torch.float) # (N, 2) cx, cy
+        pos = torch.tensor(raw_node_features[:, 3:], dtype=torch.float)  # (N, 2) cx, cy
         edge_index = torch.tensor(edge_index, dtype=torch.long)
         edge_attr = torch.tensor(edge_features, dtype=torch.long)
 
-        # Create PyG Data object — store pos separately for convenience
+        # Create PyG Data object
         data = Data(x=x, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
 
         if label is not None:

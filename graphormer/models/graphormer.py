@@ -131,6 +131,12 @@ class GraphormerModel(FairseqEncoderModel):
             action="store_true",
             help="apply layernorm before self-attention and ffn. Without this, post layernorm will used",
         )
+        parser.add_argument(
+            "--num-atom-features",
+            type=int,
+            default=5,
+            help="Number of input node features (5 for RGB+pos, 128 for CNN)",
+        )
 
     def max_nodes(self):
         return self.encoder.max_nodes
@@ -161,6 +167,7 @@ class GraphormerEncoder(FairseqEncoder):
         self.graph_encoder = GraphormerGraphEncoder(
             # < for graphormer
             num_atoms=args.num_atoms,
+            num_atom_features=getattr(args, 'num_atom_features', 5),
             num_in_degree=args.num_in_degree,
             num_out_degree=args.num_out_degree,
             num_edges=args.num_edges,
@@ -275,6 +282,8 @@ def base_architecture(args):
 
     args.activation_fn = getattr(args, "activation_fn", "gelu")
     args.encoder_normalize_before = getattr(args, "encoder_normalize_before", True)
+
+    args.num_atom_features = getattr(args, "num_atom_features", 5)
 
 
 @register_model_architecture("graphormer", "graphormer_base")
