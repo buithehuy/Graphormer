@@ -34,7 +34,7 @@ class CNNFeatureExtractor:
         self.feature_dim = feature_dim
 
         # 1. Load ResNet18 pretrained, remove classification head
-        resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        resnet = models.resnet18(pretrained=True)
         # Keep everything up to layer4 (before avgpool and fc)
         self.backbone = nn.Sequential(*list(resnet.children())[:-2])
         self.backbone.eval()
