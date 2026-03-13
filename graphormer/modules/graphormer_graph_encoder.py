@@ -73,6 +73,7 @@ class GraphormerGraphEncoder(nn.Module):
         traceable: bool = False,
         q_noise: float = 0.0,
         qn_block_size: int = 8,
+        drop_path_rate: float = 0.0,
     ) -> None:
 
         super().__init__()
@@ -129,6 +130,8 @@ class GraphormerGraphEncoder(nn.Module):
             self.layers = LayerDropModuleList(p=self.layerdrop)
         else:
             self.layers = nn.ModuleList([])
+            
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, num_encoder_layers)]
         self.layers.extend(
             [
                 self.build_graphormer_graph_encoder_layer(
@@ -143,8 +146,9 @@ class GraphormerGraphEncoder(nn.Module):
                     q_noise=q_noise,
                     qn_block_size=qn_block_size,
                     pre_layernorm=pre_layernorm,
+                    drop_path_rate=dpr[i],
                 )
-                for _ in range(num_encoder_layers)
+                for i in range(num_encoder_layers)
             ]
         )
 
@@ -176,6 +180,7 @@ class GraphormerGraphEncoder(nn.Module):
         q_noise,
         qn_block_size,
         pre_layernorm,
+        drop_path_rate=0.0,
     ):
         return GraphormerGraphEncoderLayer(
             embedding_dim=embedding_dim,
@@ -189,6 +194,7 @@ class GraphormerGraphEncoder(nn.Module):
             q_noise=q_noise,
             qn_block_size=qn_block_size,
             pre_layernorm=pre_layernorm,
+            drop_path_rate=drop_path_rate,
         )
 
     def forward(

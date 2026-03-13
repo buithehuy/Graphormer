@@ -19,6 +19,26 @@ from .multihead_attention import MultiheadAttention
 from .activations import get_activation_fn as custom_get_activation_fn
 
 
+def drop_path(x, drop_prob: float = 0., training: bool = False, scale_by_keep: bool = True):
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (1, x.shape[1], 1)
+    random_tensor = x.new_empty(shape).bernoulli_(keep_prob)
+    if keep_prob > 0.0 and scale_by_keep:
+        random_tensor.div_(keep_prob)
+    return x * random_tensor
+
+class DropPath(nn.Module):
+    def __init__(self, drop_prob: float = 0., scale_by_keep: bool = True):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
+        self.scale_by_keep = scale_by_keep
+
+    def forward(self, x):
+        return drop_path(x, self.drop_prob, self.training, self.scale_by_keep)
+
+
 class GraphormerGraphEncoderLayer(nn.Module):
     def __init__(
         self,
@@ -34,6 +54,7 @@ class GraphormerGraphEncoderLayer(nn.Module):
         qn_block_size: int = 8,
         init_fn: Callable = None,
         pre_layernorm: bool = False,
+        drop_path_rate: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -54,6 +75,7 @@ class GraphormerGraphEncoderLayer(nn.Module):
         self.activation_dropout_module = FairseqDropout(
             activation_dropout, module_name=self.__class__.__name__
         )
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
 
         # Initialize blocks
         self.activation_fn = custom_get_activation_fn(activation_fn)
@@ -134,7 +156,7 @@ class GraphormerGraphEncoderLayer(nn.Module):
             attn_mask=self_attn_mask,
         )
         x = self.dropout_module(x)
-        x = residual + x
+        x = residual + self.drop_path(x)
         if not self.pre_layernorm:
             x = self.self_attn_layer_norm(x)
 
@@ -145,7 +167,7 @@ class GraphormerGraphEncoderLayer(nn.Module):
         x = self.activation_dropout_module(x)
         x = self.fc2(x)
         x = self.dropout_module(x)
-        x = residual + x
+        x = residual + self.drop_path(x)
         if not self.pre_layernorm:
             x = self.final_layer_norm(x)
         return x, attn

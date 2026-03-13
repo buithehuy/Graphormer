@@ -87,6 +87,12 @@ class GraphormerModel(FairseqEncoderModel):
             metavar="N",
             help="num encoder attention heads",
         )
+        parser.add_argument(
+            "--encoder-drop-path-rate",
+            type=float,
+            default=0.0,
+            help="Stochastic depth (DropPath) rate for the encoder layers",
+        )
 
         # Arguments related to input and output embeddings
         parser.add_argument(
@@ -216,6 +222,7 @@ class GraphormerEncoder(FairseqEncoder):
             pre_layernorm=args.pre_layernorm,
             apply_graphormer_init=args.apply_graphormer_init,
             activation_fn=args.activation_fn,
+            drop_path_rate=getattr(args, "encoder_drop_path_rate", 0.0),
         )
 
         self.share_input_output_embed = args.share_encoder_input_output_embed
