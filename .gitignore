@@ -137,3 +137,8 @@ examples/property_prediction/ckpts
 #examples/property_prediction/dataset
 !examples/property_prediction/dataset/pcqm4m-v2/RELEASE_v1.txt
 !examples/property_prediction/dataset/pcqm4m_kddcup2021/RELEASE_v1.txt
+research_proposal_95_percent.md.resolved
+research_proposal_90_percent.md.resolved
+cnn_feature_implementation_plan.md.resolved
+fix_training_stability_implementation_plan.md.resolved
+augmentation_plan.md.resolved
