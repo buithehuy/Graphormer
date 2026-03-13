@@ -46,6 +46,16 @@ class RiceDiseasesDatasetWrapper(Dataset):
             self.data_indices = splits['test_idx']
         else:
             raise ValueError(f"Invalid split: {split}. Must be 'train', 'val', or 'test'.")
+            
+        # Tải image_paths từ metadata cho online CNN
+        metadata_path = osp.join(self.processed_dir, 'metadata.json')
+        if osp.exists(metadata_path):
+            import json
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            self.image_paths = metadata.get('image_paths', [])
+        else:
+            self.image_paths = []
     
     @property
     def processed_dir(self):
@@ -63,7 +73,10 @@ class RiceDiseasesDatasetWrapper(Dataset):
         """Load graph from disk on-demand."""
         global_idx = self.data_indices[idx].item()
         data_path = osp.join(self.processed_dir, f'data_{global_idx}.pt')
-        return torch.load(data_path)
+        item = torch.load(data_path)
+        if self.image_paths and global_idx < len(self.image_paths):
+            item.image_path = self.image_paths[global_idx]
+        return item
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +104,24 @@ class RiceDiseasesGraphormerDataset(GraphormerPYGDataset):
             item = self.dataset[idx]
             item.idx = idx
             item.y = item.y.reshape(-1)
+            
+            # Load raw_image cho online CNN
+            if hasattr(item, 'image_path') and item.image_path:
+                from PIL import Image
+                from torchvision import transforms
+                try:
+                    pil_img = Image.open(item.image_path).convert('RGB')
+                    transform = transforms.Compose([
+                        transforms.Resize((224, 224), interpolation=transforms.InterpolationMode.LANCZOS),
+                        transforms.ToTensor(),
+                        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                    ])
+                    item.raw_image = transform(pil_img)
+                except Exception as e:
+                    import torch
+                    print(f"Failed to load image {item.image_path}: {e}")
+                    item.raw_image = torch.zeros(3, 224, 224)
+            
             return preprocess_item_float(item)  # float-safe: no convert_to_single_emb on x
         else:
             raise TypeError("index to a RiceDiseasesGraphormerDataset can only be an integer.")

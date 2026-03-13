@@ -45,6 +45,12 @@ class GraphormerModel(FairseqEncoderModel):
             if not args.load_pretrained_model_output_layer:
                 self.encoder.reset_output_layer_parameters()
 
+        if getattr(args, "online_cnn_finetune", False):
+            from ..modules.online_cnn_extractor import OnlineCNNExtractor
+            self.cnn_extractor = OnlineCNNExtractor(embed_dim=self.encoder_embed_dim)
+        else:
+            self.cnn_extractor = None
+
     @staticmethod
     def add_args(parser):
         """Add model-specific arguments to the parser."""
@@ -137,6 +143,17 @@ class GraphormerModel(FairseqEncoderModel):
             default=5,
             help="Number of input node features (5 for RGB+pos, 128 for CNN)",
         )
+        parser.add_argument(
+            "--online-cnn-finetune",
+            action="store_true",
+            help="Enable online CNN feature extraction.",
+        )
+        parser.add_argument(
+            "--cnn-lr-scale",
+            type=float,
+            default=0.1,
+            help="LR scale for CNN backbone.",
+        )
 
     def max_nodes(self):
         return self.encoder.max_nodes
@@ -147,6 +164,9 @@ class GraphormerModel(FairseqEncoderModel):
         # make sure all arguments are present in older models
         base_architecture(args)
 
+        if getattr(args, "online_cnn_finetune", False):
+            args.num_atom_features = args.encoder_embed_dim
+
         if not safe_hasattr(args, "max_nodes"):
             args.max_nodes = args.tokens_per_sample
 
@@ -156,6 +176,15 @@ class GraphormerModel(FairseqEncoderModel):
         return cls(args, encoder)
 
     def forward(self, batched_data, **kwargs):
+        if self.cnn_extractor is not None and batched_data.get("raw_image") is not None:
+            cnn_features = self.cnn_extractor(
+                batched_data["raw_image"],
+                batched_data["pos"],
+                cnn_lr_scale=self.args.cnn_lr_scale
+            )
+            # Overwrite original atom features
+            batched_data["x"] = cnn_features
+            
         return self.encoder(batched_data, **kwargs)
 
 
@@ -222,10 +251,11 @@ class GraphormerEncoder(FairseqEncoder):
         if self.embed_out is not None:
             self.embed_out.reset_parameters()
 
-    def forward(self, batched_data, perturb=None, masked_tokens=None, **unused):
+    def forward(self, batched_data, perturb=None, masked_tokens=None, token_embeddings=None, **unused):
         inner_states, graph_rep = self.graph_encoder(
             batched_data,
             perturb=perturb,
+            token_embeddings=token_embeddings,
         )
 
         x = inner_states[-1].transpose(0, 1)

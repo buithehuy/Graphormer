@@ -34,6 +34,13 @@ def pad_2d_float_unsqueeze(x, padlen):
     return x.unsqueeze(0)
 
 
+def pad_3d_float_unsqueeze(x, padlen1, padlen2):
+    # Dùng cho các trường hợp features như ảnh [C, H, W] mà kích thước chuẩn rồi, 
+    # nhưng có thể cần giữ api tương tự (ở đây raw_image thường fix kích thước 3x224x224, 
+    # chỉ cần unsqueeze)
+    return x.unsqueeze(0)
+
+
 def pad_attn_bias_unsqueeze(x, padlen):
     xlen = x.size(0)
     if xlen < padlen:
@@ -87,6 +94,8 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
             item.edge_input[:, :, :multi_hop_max_dist, :],
             item.y,
             getattr(item, "num_nodes", item.x.size(0)),  # real node count for float features
+            getattr(item, "raw_image", None),            # [3, 224, 224] tensor if online CNN is enabled
+            getattr(item, "pos", None),                  # [N, 2] tensor if online CNN is enabled
         )
         for item in items
     ]
@@ -101,6 +110,8 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         edge_inputs,
         ys,
         num_nodes_list,
+        raw_images,
+        pos_list,
     ) = zip(*items)
 
     for idx, _ in enumerate(attn_biases):
@@ -128,6 +139,15 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
     )
     in_degree = torch.cat([pad_1d_unsqueeze(i, max_node_num) for i in in_degrees])
 
+    # Online CNN handling
+    raw_images_batch = None
+    if raw_images[0] is not None:
+        raw_images_batch = torch.stack(list(raw_images), dim=0)
+    
+    pos_batch = None
+    if pos_list[0] is not None:
+        pos_batch = torch.cat([pad_2d_float_unsqueeze(i, max_node_num) for i in pos_list])
+
     return dict(
         idx=torch.LongTensor(idxs),
         attn_bias=attn_bias,
@@ -139,4 +159,6 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         edge_input=edge_input,
         y=y,
         num_nodes=torch.tensor(num_nodes_list, dtype=torch.long),  # real node counts
+        raw_image=raw_images_batch,
+        pos=pos_batch,
     )
