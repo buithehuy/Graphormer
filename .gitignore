@@ -142,3 +142,5 @@ research_proposal_90_percent.md.resolved
 cnn_feature_implementation_plan.md.resolved
 fix_training_stability_implementation_plan.md.resolved
 augmentation_plan.md.resolved
+generate_cnn_baseline.py
+cnn_baseline_fair_comparison.ipynb
