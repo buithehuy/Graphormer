@@ -13,6 +13,7 @@ pip install lmdb
 pip install torch-scatter==2.0.9 -f https://pytorch-geometric.com/whl/torch-1.9.1+cu111.html
 pip install torch-sparse==0.6.12 -f https://pytorch-geometric.com/whl/torch-1.9.1+cu111.html
 pip install torch-geometric==1.7.2
+pip install torchvision==0.10.1
 pip install tensorboardX==2.4.1
 
 pip install tensorboard "protobuf<3.20"
