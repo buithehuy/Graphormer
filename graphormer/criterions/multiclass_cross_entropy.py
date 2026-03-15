@@ -221,6 +221,7 @@ class GraphPredictionLabelSmoothedCrossEntropy(FairseqCriterion):
             
             # Calculate Macro F1 and Recall
             num_classes = 4 # Hardcode based on rice diseases dataset
+            class_names = ['BrownSpot', 'Healthy', 'Hispa', 'LeafBlast']
             macro_recall = 0.0
             macro_f1 = 0.0
             valid_classes = 0
@@ -230,9 +231,12 @@ class GraphPredictionLabelSmoothedCrossEntropy(FairseqCriterion):
                 fp = sum(log.get(f"fp_c{c}", 0) for log in logging_outputs)
                 fn = sum(log.get(f"fn_c{c}", 0) for log in logging_outputs)
                 
+                c_name = class_names[c]
+                
                 if tp + fn > 0:
                     recall = tp / (tp + fn)
                     macro_recall += recall
+                    metrics.log_scalar(f"recall_{c_name}", 100.0 * recall, sample_size, round=1)
                 
                 if tp + fp + fn > 0:
                     precision = tp / (tp + fp) if tp + fp > 0 else 0.0
@@ -240,6 +244,7 @@ class GraphPredictionLabelSmoothedCrossEntropy(FairseqCriterion):
                     f1 = 2 * (precision * recall) / (precision + recall) if precision + recall > 0 else 0.0
                     macro_f1 += f1
                     valid_classes += 1
+                    metrics.log_scalar(f"f1_{c_name}", 100.0 * f1, sample_size, round=1)
             
             if valid_classes > 0:
                 metrics.log_scalar("macro_recall", 100.0 * macro_recall / valid_classes, sample_size, round=1)
