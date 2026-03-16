@@ -210,11 +210,14 @@ class GraphAttnBias(nn.Module):
                 edge_input = edge_input[:, :, :, : self.multi_hop_max_dist, :]
             # [n_graph, n_node, n_node, max_dist, n_head]
             if self.num_edge_features > 1:
-                # Multi-dim: encode each hop's edge_input over first feature dim only
-                # edge_input shape: [B, N, N, max_dist, D] — average over hops then encode
-                edge_input_used = edge_input[..., 0]  # [B, N, N, max_dist] first dim
-                edge_input_enc = self.edge_encoder.encoders[0](edge_input_used).mean(-2)
+                # Multi-dim: use first feature dim for multi-hop encoding.
+                # edge_input[..., 0]: [B, N, N, max_dist] (no edge_feat_dim)
+                # After Embedding: [B, N, N, max_dist, num_heads] — already 5-dim, no mean needed.
+                edge_input_used = edge_input[..., 0]  # [B, N, N, max_dist]
+                edge_input_enc = self.edge_encoder.encoders[0](edge_input_used)  # [B, N, N, max_dist, num_heads]
             else:
+                # Original: [B, N, N, max_dist, edge_feat_dim] → Embedding → [B, N, N, max_dist, edge_feat_dim, num_heads]
+                # .mean(-2) averages over edge_feat_dim → [B, N, N, max_dist, num_heads]
                 edge_input_enc = self.edge_encoder(edge_input).mean(-2)
             max_dist = edge_input_enc.size(-2)
             edge_input_flat = edge_input_enc.permute(3, 0, 1, 2, 4).reshape(
