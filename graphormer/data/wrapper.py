@@ -64,7 +64,11 @@ def preprocess_item_float(item):
     Key difference: x is passed through as-is — convert_to_single_emb is NOT
     called on x, because that function is designed for discrete integer atom
     features and would corrupt float values by adding large offsets (+1, +513, +1025).
-    edge_attr is still treated as integer/long (spatial info) and handled normally.
+    edge_attr is still treated as integer/long and handled normally.
+
+    Supports multi-dim edge_attr: shape [E] or [E, D].
+    Each column is offset independently by convert_to_single_emb so that each
+    edge feature dimension maps into its own embedding table range.
     """
     edge_attr, edge_index, x = item.edge_attr, item.edge_index, item.x
     N = x.size(0)
@@ -74,9 +78,10 @@ def preprocess_item_float(item):
     adj = torch.zeros([N, N], dtype=torch.bool)
     adj[edge_index[0, :], edge_index[1, :]] = True
 
-    # edge feature (still discrete → keep convert_to_single_emb)
+    # edge feature — support 1-dim or multi-dim (e.g. [E, 3] for rich edges)
     if len(edge_attr.size()) == 1:
-        edge_attr = edge_attr[:, None]
+        edge_attr = edge_attr[:, None]  # [E] → [E, 1]
+    # edge_attr: [E, D], each column is an independent discrete feature
     attn_edge_type = torch.zeros([N, N, edge_attr.size(-1)], dtype=torch.long)
     attn_edge_type[edge_index[0, :], edge_index[1, :]] = (
         convert_to_single_emb(edge_attr) + 1
@@ -84,6 +89,7 @@ def preprocess_item_float(item):
 
     shortest_path_result, path = algos.floyd_warshall(adj.numpy())
     max_dist = np.amax(shortest_path_result)
+    # gen_edge_input expects attn_edge_type as numpy; last dim is num_edge_features
     edge_input = algos.gen_edge_input(max_dist, path, attn_edge_type.numpy())
     spatial_pos = torch.from_numpy(shortest_path_result).long()
     attn_bias = torch.zeros([N + 1, N + 1], dtype=torch.float)  # with graph token
@@ -92,11 +98,15 @@ def preprocess_item_float(item):
     item.x = x  # float unchanged
     item.num_nodes = N  # store actual node count for correct padding mask
     item.attn_bias = attn_bias
-    item.attn_edge_type = attn_edge_type
+    item.attn_edge_type = attn_edge_type  # [N, N, D]
     item.spatial_pos = spatial_pos
     item.in_degree = adj.long().sum(dim=1).view(-1)
     item.out_degree = item.in_degree  # undirected graph
     item.edge_input = torch.from_numpy(edge_input).long()
+
+    # Pass through node_type mask for hierarchical graphs (fine=0, coarse=1)
+    if hasattr(item, 'node_type') and item.node_type is not None:
+        pass  # already stored on item; no extra processing needed here
 
     return item
 

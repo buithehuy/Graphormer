@@ -160,6 +160,20 @@ class GraphormerModel(FairseqEncoderModel):
             default=0.1,
             help="LR scale for CNN backbone.",
         )
+        # C2: rich edge features
+        parser.add_argument(
+            "--num-edge-features",
+            type=int,
+            default=1,
+            help="Number of edge feature dims: 1=legacy color-dist, 3=rich (C2).",
+        )
+        # C1: hierarchical graph — only affects max_nodes padding ceiling
+        parser.add_argument(
+            "--max-nodes-hierarchical",
+            type=int,
+            default=0,
+            help="If >0, sets max_node for the collator to accommodate coarse nodes (e.g. 87 for 75+12).",
+        )
 
     def max_nodes(self):
         return self.encoder.max_nodes
@@ -210,6 +224,7 @@ class GraphormerEncoder(FairseqEncoder):
             num_edge_dis=args.num_edge_dis,
             edge_type=args.edge_type,
             multi_hop_max_dist=args.multi_hop_max_dist,
+            num_edge_features=getattr(args, 'num_edge_features', 1),  # C2
             # >
             num_encoder_layers=args.encoder_layers,
             embedding_dim=args.encoder_embed_dim,
@@ -321,6 +336,7 @@ def base_architecture(args):
     args.encoder_normalize_before = getattr(args, "encoder_normalize_before", True)
 
     args.num_atom_features = getattr(args, "num_atom_features", 5)
+    args.num_edge_features = getattr(args, "num_edge_features", 1)  # C2: default 1-dim
 
 
 @register_model_architecture("graphormer", "graphormer_base")

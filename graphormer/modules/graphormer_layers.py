@@ -24,6 +24,8 @@ def init_params(module, n_layers):
 class GraphNodeFeature(nn.Module):
     """
     Compute node features for each node in the graph.
+    Supports an optional node_type encoder for hierarchical graphs
+    (fine nodes=0, coarse nodes=1).
     """
 
     def __init__(
@@ -44,6 +46,10 @@ class GraphNodeFeature(nn.Module):
 
         self.graph_token = nn.Embedding(1, hidden_dim)
 
+        # NodeType encoder for hierarchical graphs: 0=fine, 1=coarse
+        # 2 types + 1 for the graph token (type=0)
+        self.node_type_encoder = nn.Embedding(2, hidden_dim, padding_idx=None)
+
         self.apply(lambda module: init_params(module, n_layers=n_layers))
 
     def forward(self, batched_data):
@@ -55,17 +61,19 @@ class GraphNodeFeature(nn.Module):
         n_graph, n_node = x.size()[:2]
 
         # node feature + graph token
-        # x shape: [n_graph, n_node, 3] — continuous RGB float features
+        # x shape: [n_graph, n_node, D] — continuous float features
         node_feature = self.atom_encoder(x)  # [n_graph, n_node, hidden_dim]
-
-        # if self.flag and perturb is not None:
-        #     node_feature += perturb
 
         node_feature = (
             node_feature
             + self.in_degree_encoder(in_degree)
             + self.out_degree_encoder(out_degree)
         )
+
+        # Optional: node-type encoding for hierarchical graphs (fine=0, coarse=1)
+        if "node_type" in batched_data and batched_data["node_type"] is not None:
+            # batched_data["node_type"]: [n_graph, n_node] long
+            node_feature = node_feature + self.node_type_encoder(batched_data["node_type"])
 
         graph_token_feature = self.graph_token.weight.unsqueeze(0).repeat(n_graph, 1, 1)
 
@@ -74,9 +82,53 @@ class GraphNodeFeature(nn.Module):
         return graph_node_feature
 
 
+class MultiDimEdgeEncoder(nn.Module):
+    """
+    C2: Encode multi-dimensional (D-dim) edge attributes.
+
+    Each feature dimension gets its own Embedding table; the per-head
+    outputs are summed element-wise, giving the same shape as the
+    original single-dim encoder: [n_graph, n_head, n_node, n_node].
+
+    Args:
+        num_edge_features: number of edge feature dimensions D (e.g. 3)
+        num_edges:         vocabulary size per dimension (same for all dims)
+        num_heads:         number of attention heads
+        n_layers:          used for weight initialisation scale
+    """
+
+    def __init__(self, num_edge_features: int, num_edges: int, num_heads: int, n_layers: int):
+        super().__init__()
+        self.num_edge_features = num_edge_features
+        # One Embedding per feature dimension
+        self.encoders = nn.ModuleList([
+            nn.Embedding(num_edges + 1, num_heads, padding_idx=0)
+            for _ in range(num_edge_features)
+        ])
+        self.apply(lambda m: init_params(m, n_layers=n_layers))
+
+    def forward(self, attn_edge_type):
+        """
+        Args:
+            attn_edge_type: [n_graph, n_node, n_node, num_edge_features] long
+        Returns:
+            [n_graph, n_head, n_node, n_node] float
+        """
+        # Sum contributions from each feature dimension
+        out = self.encoders[0](attn_edge_type[..., 0])  # [B, N, N, H]
+        for i in range(1, self.num_edge_features):
+            out = out + self.encoders[i](attn_edge_type[..., i])
+        return out.permute(0, 3, 1, 2)  # [B, H, N, N]
+
+
+
 class GraphAttnBias(nn.Module):
     """
     Compute attention bias for each head.
+
+    Supports multi-dim edge features (C2) via MultiDimEdgeEncoder when
+    num_edge_features > 1. Falls back to the original single-Embedding
+    path for num_edge_features == 1 (default, backward-compatible).
     """
 
     def __init__(
@@ -90,12 +142,25 @@ class GraphAttnBias(nn.Module):
         edge_type,
         multi_hop_max_dist,
         n_layers,
+        num_edge_features: int = 1,
     ):
         super(GraphAttnBias, self).__init__()
         self.num_heads = num_heads
         self.multi_hop_max_dist = multi_hop_max_dist
+        self.num_edge_features = num_edge_features
 
-        self.edge_encoder = nn.Embedding(num_edges + 1, num_heads, padding_idx=0)
+        if num_edge_features > 1:
+            # C2: multi-dim edge encoder
+            self.edge_encoder = MultiDimEdgeEncoder(
+                num_edge_features=num_edge_features,
+                num_edges=num_edges,
+                num_heads=num_heads,
+                n_layers=n_layers,
+            )
+        else:
+            # Legacy: single-dim Embedding
+            self.edge_encoder = nn.Embedding(num_edges + 1, num_heads, padding_idx=0)
+
         self.edge_type = edge_type
         if self.edge_type == "multi_hop":
             self.edge_dis_encoder = nn.Embedding(
@@ -113,7 +178,6 @@ class GraphAttnBias(nn.Module):
             batched_data["spatial_pos"],
             batched_data["x"],
         )
-        # in_degree, out_degree = batched_data.in_degree, batched_data.in_degree
         edge_input, attn_edge_type = (
             batched_data["edge_input"],
             batched_data["attn_edge_type"],
@@ -145,9 +209,15 @@ class GraphAttnBias(nn.Module):
                 spatial_pos_ = spatial_pos_.clamp(0, self.multi_hop_max_dist)
                 edge_input = edge_input[:, :, :, : self.multi_hop_max_dist, :]
             # [n_graph, n_node, n_node, max_dist, n_head]
-            edge_input = self.edge_encoder(edge_input).mean(-2)
-            max_dist = edge_input.size(-2)
-            edge_input_flat = edge_input.permute(3, 0, 1, 2, 4).reshape(
+            if self.num_edge_features > 1:
+                # Multi-dim: encode each hop's edge_input over first feature dim only
+                # edge_input shape: [B, N, N, max_dist, D] — average over hops then encode
+                edge_input_used = edge_input[..., 0]  # [B, N, N, max_dist] first dim
+                edge_input_enc = self.edge_encoder.encoders[0](edge_input_used).mean(-2)
+            else:
+                edge_input_enc = self.edge_encoder(edge_input).mean(-2)
+            max_dist = edge_input_enc.size(-2)
+            edge_input_flat = edge_input_enc.permute(3, 0, 1, 2, 4).reshape(
                 max_dist, -1, self.num_heads
             )
             edge_input_flat = torch.bmm(
@@ -163,10 +233,15 @@ class GraphAttnBias(nn.Module):
                 edge_input.sum(-2) / (spatial_pos_.float().unsqueeze(-1))
             ).permute(0, 3, 1, 2)
         else:
-            # [n_graph, n_node, n_node, n_head] -> [n_graph, n_head, n_node, n_node]
-            edge_input = self.edge_encoder(attn_edge_type).mean(-2).permute(0, 3, 1, 2)
+            if self.num_edge_features > 1:
+                # C2: MultiDimEdgeEncoder already returns [B, H, N, N]
+                edge_input = self.edge_encoder(attn_edge_type)
+            else:
+                # Legacy: [n_graph, n_node, n_node, n_head] -> [n_graph, n_head, n_node, n_node]
+                edge_input = self.edge_encoder(attn_edge_type).mean(-2).permute(0, 3, 1, 2)
 
         graph_attn_bias[:, :, 1:, 1:] = graph_attn_bias[:, :, 1:, 1:] + edge_input
         graph_attn_bias = graph_attn_bias + attn_bias.unsqueeze(1)  # reset
 
         return graph_attn_bias
+

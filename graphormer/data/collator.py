@@ -96,6 +96,7 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
             getattr(item, "num_nodes", item.x.size(0)),  # real node count for float features
             getattr(item, "raw_image", None),            # [3, 224, 224] tensor if online CNN is enabled
             getattr(item, "pos", None),                  # [N, 2] tensor if online CNN is enabled
+            getattr(item, "node_type", None),            # [N] long: 0=fine, 1=coarse (C1)
         )
         for item in items
     ]
@@ -112,6 +113,7 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         num_nodes_list,
         raw_images,
         pos_list,
+        node_type_list,
     ) = zip(*items)
 
     for idx, _ in enumerate(attn_biases):
@@ -148,6 +150,18 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
     if pos_list[0] is not None:
         pos_batch = torch.cat([pad_2d_float_unsqueeze(i, max_node_num) for i in pos_list])
 
+    # C1: Hierarchical node type: 0=fine, 1=coarse. None for legacy graphs.
+    node_type_batch = None
+    if node_type_list[0] is not None:
+        # Pad to max_node_num with 0 (fine) — padding nodes are masked out anyway
+        node_type_batch = torch.cat([
+            torch.cat([
+                nt,
+                torch.zeros(max_node_num - nt.size(0), dtype=torch.long)
+            ]).unsqueeze(0)
+            for nt in node_type_list
+        ])  # [B, max_node_num]
+
     return dict(
         idx=torch.LongTensor(idxs),
         attn_bias=attn_bias,
@@ -161,4 +175,5 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         num_nodes=torch.tensor(num_nodes_list, dtype=torch.long),  # real node counts
         raw_image=raw_images_batch,
         pos=pos_batch,
+        node_type=node_type_batch,  # C1: [B, N] or None
     )

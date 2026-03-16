@@ -74,6 +74,7 @@ class GraphormerGraphEncoder(nn.Module):
         q_noise: float = 0.0,
         qn_block_size: int = 8,
         drop_path_rate: float = 0.0,
+        num_edge_features: int = 1,  # C2: number of edge feature dims (1=legacy, 3=rich)
     ) -> None:
 
         super().__init__()
@@ -105,6 +106,7 @@ class GraphormerGraphEncoder(nn.Module):
             multi_hop_max_dist=multi_hop_max_dist,
             hidden_dim=embedding_dim,
             n_layers=num_encoder_layers,
+            num_edge_features=num_edge_features,  # C2
         )
 
         self.embed_scale = embed_scale
