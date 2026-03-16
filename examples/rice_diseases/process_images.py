@@ -192,17 +192,24 @@ def process_images_to_graphs(
     augment=False,
     target_count=0,
     use_cnn_features=False,
+    use_rich_edges=False,       # C2: 3-dim edge features
+    use_hierarchical=False,     # C1: add KMeans coarse nodes
+    n_clusters=12,              # C1: number of coarse nodes
 ):
     """
     Process all images and save as individual .pt files.
 
     Args:
-        image_dir: Directory containing rice disease images
-        output_dir: Directory to save processed graphs
-        n_segments: Number of superpixels per image
-        seed: Random seed for splits
-        augment: If True, oversample minority classes via augmentation
-        target_count: Target samples per class (0 = use max class count)
+        image_dir:        Directory containing rice disease images
+        output_dir:       Directory to save processed graphs
+        n_segments:       Number of superpixels per image
+        seed:             Random seed for splits
+        augment:          If True, oversample minority classes via augmentation
+        target_count:     Target samples per class (0 = use max class count)
+        use_cnn_features: Use CNN ResNet18 features instead of raw RGB
+        use_rich_edges:   C2 — 3-dim edge features (color+spatial+cosine)
+        use_hierarchical: C1 — add KMeans coarse nodes
+        n_clusters:       C1 — number of coarse nodes (default 12)
 
     Returns:
         Path to processed directory
@@ -240,6 +247,10 @@ def process_images_to_graphs(
     )
     if use_cnn_features:
         print(f"  CNN feature extraction: ON (device={device})")
+    if use_rich_edges:
+        print(f"  C2 Rich edge features: ON (3-dim: color + spatial + cosine)")
+    if use_hierarchical:
+        print(f"  C1 Hierarchical graph: ON ({n_clusters} coarse nodes, total={n_segments + n_clusters} nodes)")
 
     # Process each image (original + augmented)
     all_labels = []
@@ -267,7 +278,12 @@ def process_images_to_graphs(
             # Augmentation path: images already loaded into PIL objects
             for pil_img, src_path, aug_type in tqdm(samples, desc=f"  {class_name}"):
                 try:
-                    graph = converter.convert(pil_img, label=class_idx)
+                    graph = converter.convert(
+                        pil_img, label=class_idx,
+                        use_rich_edges=use_rich_edges,
+                        use_hierarchical=use_hierarchical,
+                        n_clusters=n_clusters,
+                    )
                     save_path = osp.join(processed_dir, f'data_{graph_idx}.pt')
                     torch.save(graph, save_path)
 
@@ -286,7 +302,12 @@ def process_images_to_graphs(
             for img_path in tqdm(image_paths, desc=f"  {class_name}"):
                 try:
                     image = Image.open(img_path).convert('RGB')
-                    graph = converter.convert(image, label=class_idx)
+                    graph = converter.convert(
+                        image, label=class_idx,
+                        use_rich_edges=use_rich_edges,
+                        use_hierarchical=use_hierarchical,
+                        n_clusters=n_clusters,
+                    )
 
                     save_path = osp.join(processed_dir, f'data_{graph_idx}.pt')
                     torch.save(graph, save_path)
@@ -429,6 +450,18 @@ def main():
         '--use_cnn', action='store_true',
         help='Use CNN (ResNet18) features instead of raw RGB (5→128 dims per node)'
     )
+    parser.add_argument(
+        '--use_rich_edges', action='store_true',
+        help='C2: Use 3-dim edge features (color dist, spatial dist, cosine sim) instead of 1-dim color-dist.'
+    )
+    parser.add_argument(
+        '--use_hierarchical', action='store_true',
+        help='C1: Add KMeans coarse nodes on top of fine superpixels (need --n_clusters).'
+    )
+    parser.add_argument(
+        '--n_clusters', type=int, default=12,
+        help='C1: Number of KMeans coarse nodes to add (default 12).'
+    )
 
     args = parser.parse_args()
 
@@ -441,6 +474,9 @@ def main():
         augment=args.augment,
         target_count=args.target_count,
         use_cnn_features=args.use_cnn,
+        use_rich_edges=getattr(args, 'use_rich_edges', False),
+        use_hierarchical=getattr(args, 'use_hierarchical', False),
+        n_clusters=getattr(args, 'n_clusters', 12),
     )
 
     # Create zip if requested
