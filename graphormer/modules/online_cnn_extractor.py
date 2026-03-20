@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+
 class GradMultiply(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, scale):
@@ -11,92 +12,138 @@ class GradMultiply(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        # Scale ngẫu ngược gradient
         return grad_output * ctx.scale, None
+
+
+def _grid_sample_from_map(feat_map, pos):
+    """
+    Lấy feature tại các vị trí centroids bằng bilinear interpolation.
+
+    Args:
+        feat_map: [B, C, H, W]
+        pos: [B, N, 2] — (cx, cy) chuẩn hóa [0, 1]
+
+    Returns:
+        [B, N, C]
+    """
+    # Chuyển pos từ [0,1] → [-1,1] theo chuẩn của F.grid_sample
+    grid = pos * 2.0 - 1.0          # [B, N, 2]
+    grid = grid.unsqueeze(1)         # [B, 1, N, 2]
+
+    sampled = F.grid_sample(
+        feat_map,                    # [B, C, H, W]
+        grid,                        # [B, 1, N, 2]
+        mode='bilinear',
+        padding_mode='border',
+        align_corners=True,
+    )                                # [B, C, 1, N]
+
+    return sampled.squeeze(2).transpose(1, 2)  # [B, N, C]
 
 
 class OnlineCNNExtractor(nn.Module):
     """
-    Backbone ResNet18 trích xuất CNN field.
-    Dùng F.grid_sample để lấy node embedding tương ứng với centroid (pos).
-    
+    Multi-scale CNN Extractor dùng ResNet18 backbone với FPN-style feature sampling.
+
+    Lấy đặc trưng từ 3 tầng của ResNet18 để nắm bắt cả thông tin texture/cạnh (tầng sớm)
+    lẫn thông tin ngữ nghĩa (tầng sâu), giúp model nhận ra các pattern nhỏ như Hispa.
+
+    Spatial resolution tại mỗi scale (ảnh đầu vào 224×224):
+        layer2 → [B, 128, 28, 28]  stride 8x  — texture & cạnh mảnh (tốt cho Hispa!)
+        layer3 → [B, 256, 14, 14]  stride 16x — đặc trưng trung cấp
+        layer4 → [B, 512, 7,  7 ]  stride 32x — ngữ nghĩa toàn cục
+
     Args:
-        embed_dim: 차원 output sau projection mask.
-        freeze_bn: Giữ Batch Norm ở chế độ eval để features không bị jump.
+        embed_dim: Số chiều output sau projection.
+        freeze_bn:  Nếu True, giữ BatchNorm ở eval mode để tránh feature shift.
+        scales:     Tuple các tầng ResNet cần lấy (2, 3, 4). Giảm scales = nhẹ hơn nhưng
+                    mất thông tin. Mặc định dùng cả 3 cho kết quả tốt nhất.
     """
-    def __init__(self, embed_dim=128, freeze_bn=True):
+
+    # Kênh đầu ra tương ứng với mỗi layer của ResNet18
+    _LAYER_CHANNELS = {2: 128, 3: 256, 4: 512}
+
+    def __init__(self, embed_dim=128, freeze_bn=True, scales=(2, 3, 4)):
         super().__init__()
+        assert all(s in (2, 3, 4) for s in scales), "scales phải là tập con của {2, 3, 4}"
+        self.scales = sorted(scales)
+
         resnet = models.resnet18(pretrained=True)
-        # Drop FC & AvgPool (2 layers cuối)
-        self.backbone = nn.Sequential(*list(resnet.children())[:-2])
-        self.projector = nn.Linear(512, embed_dim)
-        
+
+        # Tách ResNet18 thành các block riêng để truy cập feature map trung gian
+        self.stem    = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
+        self.layer1  = resnet.layer1   # [B, 64,  56, 56]  stride 4x
+        self.layer2  = resnet.layer2   # [B, 128, 28, 28]  stride 8x
+        self.layer3  = resnet.layer3   # [B, 256, 14, 14]  stride 16x
+        self.layer4  = resnet.layer4   # [B, 512, 7,  7 ]  stride 32x
+
+        total_channels = sum(self._LAYER_CHANNELS[s] for s in self.scales)
+        self.projector = nn.Linear(total_channels, embed_dim)
+
         self.freeze_bn = freeze_bn
-        
-        # Setup mode ban đầu cho Backbone
         if self.freeze_bn:
-            for m in self.backbone.modules():
-                if isinstance(m, nn.BatchNorm2d):
-                    m.eval()
-                    # Freeze BN parameter updates
-                    m.weight.requires_grad = False
-                    m.bias.requires_grad = False
-                    
+            self._freeze_bn_params()
+
+    # ------------------------------------------------------------------
+    # BN freeze helpers
+    # ------------------------------------------------------------------
+    def _freeze_bn_params(self):
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
+                m.weight.requires_grad = False
+                m.bias.requires_grad   = False
+
     def train(self, mode=True):
-        """Override train để giữ BN ở eval mode nếu freeze_bn=True"""
         super().train(mode)
         if self.freeze_bn:
-            for m in self.backbone.modules():
+            for m in self.modules():
                 if isinstance(m, nn.BatchNorm2d):
                     m.eval()
         return self
 
-    def extract_feature_map(self, raw_image):
+    # ------------------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------------------
+    def _extract_feature_maps(self, raw_image):
         """
-        raw_image: [B, 3, 224, 224] tensor, range [0, 1] usually,
-                   BUT resnet is pretrained with standard imagenet normalization.
-                   If not grouped inside dataloader, consider applying transform here.
+        Đưa ảnh qua ResNet18 và trả về dict {scale: feature_map}.
+
+        raw_image: [B, 3, 224, 224] — đã chuẩn hóa ImageNet
         """
-        # (Assuming raw_image is already normalized with ImageNet mean/std internally or via dataloader)
-        return self.backbone(raw_image)  # [B, 512, 7, 7]
+        x = self.stem(raw_image)    # [B, 64, 56, 56]
+        x = self.layer1(x)          # [B, 64, 56, 56]
+        l2 = self.layer2(x)         # [B, 128, 28, 28]
+        l3 = self.layer3(l2)        # [B, 256, 14, 14]
+        l4 = self.layer4(l3)        # [B, 512, 7,  7 ]
+        return {2: l2, 3: l3, 4: l4}
 
     def forward(self, raw_image, pos, cnn_lr_scale=0.1):
         """
         Args:
-            raw_image: Tensor [B, 3, 224, 224]
-            pos: Tensor [B, max_nodes, 2] chứa (cx, cy) chuẩn hóa [0, 1].
-                 Padding values thường có thể = 0 (và node sẽ bị mask trong attention).
-            cnn_lr_scale: Multiplier cho learning rate scale
-            
+            raw_image:    Tensor [B, 3, 224, 224]
+            pos:          Tensor [B, max_nodes, 2] — centroids chuẩn hóa [0, 1]
+            cnn_lr_scale: Nhân gradient ngược để giảm learning rate cho CNN backbone.
+
         Returns:
             features: Tensor [B, max_nodes, embed_dim]
         """
-        # 1. Forward backbone
-        feat_map = self.extract_feature_map(raw_image) # [B, 512, 7, 7]
-        
-        # Áp dụng Gradient Multiplier để cnn_lr_scale (giảm LR cho parameters của backbone)
-        feat_map = GradMultiply.apply(feat_map, cnn_lr_scale)
-        
-        # 2. Grid Sample từ feat_map dựa trên pos
-        # F.grid_sample cần tọa độ range [-1, 1], (x,y) mapping
-        # pos hiện tại là [0, 1]
-        grid = pos * 2.0 - 1.0  # [B, max_nodes, 2]
-        
-        # Vì grid_sample expect grid shape [B, H_out, W_out, 2],
-        # ta squeeze shape thành [B, 1, max_nodes, 2]
-        grid = grid.unsqueeze(1) # [B, 1, N, 2]
-        
-        sampled = F.grid_sample(
-            feat_map,               # [B, 512, 7, 7]
-            grid,                   # [B, 1, N, 2]
-            mode='bilinear',
-            padding_mode='border',
-            align_corners=True
-        ) # [B, 512, 1, N]
-        
-        sampled = sampled.squeeze(2).transpose(1, 2) # [B, N, 512]
-        
-        # 3. Project to embedding_dim
-        out = self.projector(sampled) # [B, N, embed_dim]
-        
+        # 1. Trích xuất feature maps từ các tầng đã chọn
+        feat_maps = self._extract_feature_maps(raw_image)
+
+        # 2. Áp dụng GradMultiply để scale learning rate cho backbone
+        feat_maps = {
+            s: GradMultiply.apply(fm, cnn_lr_scale)
+            for s, fm in feat_maps.items()
+        }
+
+        # 3. Grid sample tại centroids cho mỗi scale, rồi concatenate
+        sampled_list = [
+            _grid_sample_from_map(feat_maps[s], pos)   # [B, N, C_s]
+            for s in self.scales
+        ]
+        multi_scale = torch.cat(sampled_list, dim=-1)  # [B, N, sum(C_s)]
+
+        # 4. Project về embed_dim
+        out = self.projector(multi_scale)              # [B, N, embed_dim]
         return out
