@@ -17,6 +17,7 @@ import numpy as np
 from skimage.segmentation import slic, mark_boundaries
 from skimage.measure import regionprops
 from skimage.util import img_as_float
+from skimage.color import rgb2hsv
 from PIL import Image
 import torch
 import torch.nn.functional as F
@@ -410,21 +411,48 @@ class ImageToGraphConverter:
             # Legacy: [R, G, B, cx, cy] = 5-dim
             x = torch.tensor(raw_node_features, dtype=torch.float)
 
-        # Build edge index
+        # Build base local superpixel adjacency
+        adjacency = self.build_adjacency(segments)
+        edge_list = []
+        for src in adjacency:
+            for dst in adjacency[src]:
+                edge_list.append([src, dst])
+
         if use_full_connectivity:
-            # Fully connected graph: all pairs except self-loops
-            src_nodes = np.repeat(np.arange(n_segments), n_segments - 1)
-            dst_nodes = np.tile(np.arange(n_segments), n_segments)
-            dst_nodes = dst_nodes[dst_nodes != np.repeat(np.arange(n_segments), n_segments)]
-            edge_index_np = np.stack([src_nodes, dst_nodes], axis=0).astype(np.int64)
+            # Identify leaf nodes using HSV color space
+            rgb_features = raw_node_features[:, :3]
+            
+            # Convert RGB (N, 3) -> HSV (N, 3) using a dummy batch dim
+            hsv_features = rgb2hsv(rgb_features.reshape(1, -1, 3))[0]
+            
+            # S is saturation [1], V is value/brightness [2]
+            S = hsv_features[:, 1]
+            V = hsv_features[:, 2]
+            
+            # Backgrounds are usually white/grey (low S) or very dark (low V).
+            # Threshold to isolate the leaf.
+            is_leaf = (S > 0.15) & (V > 0.15)
+            leaf_nodes = np.where(is_leaf)[0]
+            
+            if len(leaf_nodes) > 1:
+                # Fully connect only the identified leaf nodes
+                src_leaf = np.repeat(leaf_nodes, len(leaf_nodes) - 1)
+                dst_leaf = np.tile(leaf_nodes, len(leaf_nodes))
+                dst_leaf = dst_leaf[dst_leaf != np.repeat(leaf_nodes, len(leaf_nodes))]
+                
+                # Add these leaf-only full connections to the local edges
+                leaf_edges = np.stack([src_leaf, dst_leaf], axis=1).tolist()
+                edge_list.extend(leaf_edges)
+
+        # Convert to numpy array
+        edge_index_np = np.array(edge_list, dtype=np.int64)
+        if len(edge_index_np) > 0:
+            # Remove any duplicate edges (e.g. adjacent leaf nodes)
+            edge_index_np = np.unique(edge_index_np, axis=0)
         else:
-            # Default: use local superpixel adjacency
-            adjacency = self.build_adjacency(segments)
-            edge_list = []
-            for src in adjacency:
-                for dst in adjacency[src]:
-                    edge_list.append([src, dst])
-            edge_index_np = np.array(edge_list, dtype=np.int64).T  # (2, E)
+            edge_index_np = np.zeros((0, 2), dtype=np.int64)
+            
+        edge_index_np = edge_index_np.T  # (2, E)
 
         # ── Positional features ─────────────────────────────────────────────
         pos = torch.tensor(raw_node_features[:, 3:], dtype=torch.float)  # (N, 2)
