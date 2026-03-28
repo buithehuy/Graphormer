@@ -196,6 +196,7 @@ def process_images_to_graphs(
     use_hierarchical=False,     # C1: add KMeans coarse nodes
     n_clusters=12,              # C1: number of coarse nodes
     use_full_connectivity=False,# Full connectivity graph
+    use_global_virtual_node=False, # Global Virtual Node
 ):
     """
     Process all images and save as individual .pt files.
@@ -211,6 +212,7 @@ def process_images_to_graphs(
         use_rich_edges:   C2 — 3-dim edge features (color+spatial+cosine)
         use_hierarchical: C1 — add KMeans coarse nodes
         n_clusters:       C1 — number of coarse nodes (default 12)
+        use_global_virtual_node: Add a Virtual Node connecting all leaf nodes
 
     Returns:
         Path to processed directory
@@ -254,6 +256,8 @@ def process_images_to_graphs(
         print(f"  C1 Hierarchical graph: ON ({n_clusters} coarse nodes, total={n_segments + n_clusters} nodes)")
     if use_full_connectivity:
         print(f"  Full connectivity: ON (Connecting all nodes)")
+    if use_global_virtual_node:
+        print(f"  Global Virtual Node: ON (Connecting to all leaf nodes)")
 
     # Process each image (original + augmented)
     all_labels = []
@@ -287,6 +291,7 @@ def process_images_to_graphs(
                         use_hierarchical=use_hierarchical,
                         n_clusters=n_clusters,
                         use_full_connectivity=use_full_connectivity,
+                        use_global_virtual_node=use_global_virtual_node,
                     )
                     save_path = osp.join(processed_dir, f'data_{graph_idx}.pt')
                     torch.save(graph, save_path)
@@ -312,6 +317,7 @@ def process_images_to_graphs(
                         use_hierarchical=use_hierarchical,
                         n_clusters=n_clusters,
                         use_full_connectivity=use_full_connectivity,
+                        use_global_virtual_node=use_global_virtual_node,
                     )
 
                     save_path = osp.join(processed_dir, f'data_{graph_idx}.pt')
@@ -471,6 +477,10 @@ def main():
         '--full_connectivity', action='store_true',
         help='Connect every superpixel node to all other nodes.'
     )
+    parser.add_argument(
+        '--global_virtual_node', action='store_true',
+        help='Add a global virtual node that connects to all nodes in the leaf region.'
+    )
 
     args = parser.parse_args()
 
@@ -487,6 +497,7 @@ def main():
         use_hierarchical=getattr(args, 'use_hierarchical', False),
         n_clusters=getattr(args, 'n_clusters', 12),
         use_full_connectivity=getattr(args, 'full_connectivity', False),
+        use_global_virtual_node=getattr(args, 'global_virtual_node', False),
     )
 
     # Create zip if requested

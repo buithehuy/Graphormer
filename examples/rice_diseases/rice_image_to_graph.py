@@ -372,7 +372,7 @@ class ImageToGraphConverter:
         return new_data
     
     def convert(self, image, label=None, use_rich_edges=False, use_hierarchical=False,
-                n_clusters=12, n_bins=10, use_full_connectivity=False):
+                n_clusters=12, n_bins=10, use_full_connectivity=False, use_global_virtual_node=False):
         """
         Convert an image to a graph structure.
 
@@ -384,6 +384,7 @@ class ImageToGraphConverter:
             n_clusters:       Number of coarse nodes for C1 (default 12)
             n_bins:           Quantisation bins for edge features (default 10)
             use_full_connectivity: If True, fully connect all superpixels.
+            use_global_virtual_node: If True, adds a single global virtual node connecting to leaf nodes.
 
         Returns:
             data: PyTorch Geometric Data object with:
@@ -410,6 +411,9 @@ class ImageToGraphConverter:
         else:
             # Legacy: [R, G, B, cx, cy] = 5-dim
             x = torch.tensor(raw_node_features, dtype=torch.float)
+
+        # ── Positional features ─────────────────────────────────────────────
+        pos = torch.tensor(raw_node_features[:, 3:], dtype=torch.float)  # (N, 2)
 
         # Build base local superpixel adjacency
         adjacency = self.build_adjacency(segments)
@@ -444,6 +448,39 @@ class ImageToGraphConverter:
                 leaf_edges = np.stack([src_leaf, dst_leaf], axis=1).tolist()
                 edge_list.extend(leaf_edges)
 
+        if use_global_virtual_node:
+            # Identify leaf nodes using HSV color space
+            rgb_features = raw_node_features[:, :3]
+            hsv_features = rgb2hsv(rgb_features.reshape(1, -1, 3))[0]
+            S = hsv_features[:, 1]
+            V = hsv_features[:, 2]
+            
+            is_leaf = (S > 0.15) & (V > 0.15)
+            leaf_nodes = np.where(is_leaf)[0]
+            
+            if len(leaf_nodes) > 0:
+                # 1. Output features
+                v_x = x[leaf_nodes].mean(dim=0, keepdim=True)
+                v_pos = pos[leaf_nodes].mean(dim=0, keepdim=True)
+                v_raw = raw_node_features[leaf_nodes].mean(axis=0, keepdims=True)
+                
+                # 2. Append
+                x = torch.cat([x, v_x], dim=0)
+                pos = torch.cat([pos, v_pos], dim=0)
+                raw_node_features = np.concatenate([raw_node_features, v_raw], axis=0)
+                
+                v_node_idx = x.size(0) - 1
+                
+                # 3. Add edges (Virtual Node <-> Leaf Nodes)
+                src_v = np.repeat(v_node_idx, len(leaf_nodes))
+                dst_leaf = leaf_nodes
+                v_edges = np.stack([
+                    np.concatenate([src_v, dst_leaf]),
+                    np.concatenate([dst_leaf, src_v])
+                ], axis=1).tolist()
+                
+                edge_list.extend(v_edges)
+
         # Convert to numpy array
         edge_index_np = np.array(edge_list, dtype=np.int64)
         if len(edge_index_np) > 0:
@@ -453,9 +490,6 @@ class ImageToGraphConverter:
             edge_index_np = np.zeros((0, 2), dtype=np.int64)
             
         edge_index_np = edge_index_np.T  # (2, E)
-
-        # ── Positional features ─────────────────────────────────────────────
-        pos = torch.tensor(raw_node_features[:, 3:], dtype=torch.float)  # (N, 2)
         edge_index = torch.tensor(edge_index_np, dtype=torch.long)
 
         # ── Edge features (C2: rich 3-dim, or legacy 1-dim) ─────────────────
