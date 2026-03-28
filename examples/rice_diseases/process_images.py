@@ -195,6 +195,7 @@ def process_images_to_graphs(
     use_rich_edges=False,       # C2: 3-dim edge features
     use_hierarchical=False,     # C1: add KMeans coarse nodes
     n_clusters=12,              # C1: number of coarse nodes
+    use_full_connectivity=False,# Full connectivity graph
 ):
     """
     Process all images and save as individual .pt files.
@@ -251,6 +252,8 @@ def process_images_to_graphs(
         print(f"  C2 Rich edge features: ON (3-dim: color + spatial + cosine)")
     if use_hierarchical:
         print(f"  C1 Hierarchical graph: ON ({n_clusters} coarse nodes, total={n_segments + n_clusters} nodes)")
+    if use_full_connectivity:
+        print(f"  Full connectivity: ON (Connecting all nodes)")
 
     # Process each image (original + augmented)
     all_labels = []
@@ -283,6 +286,7 @@ def process_images_to_graphs(
                         use_rich_edges=use_rich_edges,
                         use_hierarchical=use_hierarchical,
                         n_clusters=n_clusters,
+                        use_full_connectivity=use_full_connectivity,
                     )
                     save_path = osp.join(processed_dir, f'data_{graph_idx}.pt')
                     torch.save(graph, save_path)
@@ -307,6 +311,7 @@ def process_images_to_graphs(
                         use_rich_edges=use_rich_edges,
                         use_hierarchical=use_hierarchical,
                         n_clusters=n_clusters,
+                        use_full_connectivity=use_full_connectivity,
                     )
 
                     save_path = osp.join(processed_dir, f'data_{graph_idx}.pt')
@@ -462,6 +467,10 @@ def main():
         '--n_clusters', type=int, default=12,
         help='C1: Number of KMeans coarse nodes to add (default 12).'
     )
+    parser.add_argument(
+        '--full_connectivity', action='store_true',
+        help='Connect every superpixel node to all other nodes.'
+    )
 
     args = parser.parse_args()
 
@@ -477,6 +486,7 @@ def main():
         use_rich_edges=getattr(args, 'use_rich_edges', False),
         use_hierarchical=getattr(args, 'use_hierarchical', False),
         n_clusters=getattr(args, 'n_clusters', 12),
+        use_full_connectivity=getattr(args, 'full_connectivity', False),
     )
 
     # Create zip if requested

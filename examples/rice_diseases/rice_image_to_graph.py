@@ -371,7 +371,7 @@ class ImageToGraphConverter:
         return new_data
     
     def convert(self, image, label=None, use_rich_edges=False, use_hierarchical=False,
-                n_clusters=12, n_bins=10):
+                n_clusters=12, n_bins=10, use_full_connectivity=False):
         """
         Convert an image to a graph structure.
 
@@ -382,6 +382,7 @@ class ImageToGraphConverter:
             use_hierarchical: C1 — if True, add KMeans coarse nodes
             n_clusters:       Number of coarse nodes for C1 (default 12)
             n_bins:           Quantisation bins for edge features (default 10)
+            use_full_connectivity: If True, fully connect all superpixels.
 
         Returns:
             data: PyTorch Geometric Data object with:
@@ -399,9 +400,6 @@ class ImageToGraphConverter:
         # Extract superpixels
         segments, n_segments = self.extract_superpixels(image)
 
-        # Build adjacency
-        adjacency = self.build_adjacency(segments)
-
         # Compute raw node features (always needed for edge features & pos)
         raw_node_features = self.compute_node_features(image, segments, n_segments)
 
@@ -413,12 +411,20 @@ class ImageToGraphConverter:
             x = torch.tensor(raw_node_features, dtype=torch.float)
 
         # Build edge index
-        edge_list = []
-        for src in adjacency:
-            for dst in adjacency[src]:
-                edge_list.append([src, dst])
-
-        edge_index_np = np.array(edge_list, dtype=np.int64).T  # (2, E)
+        if use_full_connectivity:
+            # Fully connected graph: all pairs except self-loops
+            src_nodes = np.repeat(np.arange(n_segments), n_segments - 1)
+            dst_nodes = np.tile(np.arange(n_segments), n_segments)
+            dst_nodes = dst_nodes[dst_nodes != np.repeat(np.arange(n_segments), n_segments)]
+            edge_index_np = np.stack([src_nodes, dst_nodes], axis=0).astype(np.int64)
+        else:
+            # Default: use local superpixel adjacency
+            adjacency = self.build_adjacency(segments)
+            edge_list = []
+            for src in adjacency:
+                for dst in adjacency[src]:
+                    edge_list.append([src, dst])
+            edge_index_np = np.array(edge_list, dtype=np.int64).T  # (2, E)
 
         # ── Positional features ─────────────────────────────────────────────
         pos = torch.tensor(raw_node_features[:, 3:], dtype=torch.float)  # (N, 2)
