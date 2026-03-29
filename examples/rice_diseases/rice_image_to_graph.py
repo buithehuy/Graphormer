@@ -365,6 +365,7 @@ class ImageToGraphConverter:
             edge_attr=all_edge_attr,
             y=fine_graph.y,
             node_type=node_type,
+            mask=getattr(fine_graph, 'mask', None),
         )
         if all_pos is not None:
             new_data.pos = all_pos
@@ -504,7 +505,8 @@ class ImageToGraphConverter:
             edge_attr = torch.tensor(edge_feats_np, dtype=torch.long)
 
         # ── Create fine-level PyG Data object ────────────────────────────────
-        data = Data(x=x, pos=pos, edge_index=edge_index, edge_attr=edge_attr)
+        mask = torch.tensor(segments, dtype=torch.long)
+        data = Data(x=x, pos=pos, edge_index=edge_index, edge_attr=edge_attr, mask=mask)
 
         if label is not None:
             data.y = torch.tensor([label], dtype=torch.long)

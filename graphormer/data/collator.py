@@ -97,6 +97,7 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
             getattr(item, "raw_image", None),            # [3, 224, 224] tensor if online CNN is enabled
             getattr(item, "pos", None),                  # [N, 2] tensor if online CNN is enabled
             getattr(item, "node_type", None),            # [N] long: 0=fine, 1=coarse (C1)
+            getattr(item, "mask", None),                 # [224, 224] long tensor for mask pooling
         )
         for item in items
     ]
@@ -114,6 +115,7 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         raw_images,
         pos_list,
         node_type_list,
+        masks_list,
     ) = zip(*items)
 
     for idx, _ in enumerate(attn_biases):
@@ -162,6 +164,10 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
             for nt in node_type_list
         ])  # [B, max_node_num]
 
+    mask_batch = None
+    if masks_list[0] is not None:
+        mask_batch = torch.stack(list(masks_list), dim=0) # [B, 224, 224]
+
     return dict(
         idx=torch.LongTensor(idxs),
         attn_bias=attn_bias,
@@ -176,4 +182,5 @@ def collator(items, max_node=512, multi_hop_max_dist=20, spatial_pos_max=20):
         raw_image=raw_images_batch,
         pos=pos_batch,
         node_type=node_type_batch,  # C1: [B, N] or None
+        mask=mask_batch,
     )

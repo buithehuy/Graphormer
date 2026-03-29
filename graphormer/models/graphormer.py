@@ -200,6 +200,7 @@ class GraphormerModel(FairseqEncoderModel):
             cnn_features = self.cnn_extractor(
                 batched_data["raw_image"],
                 batched_data["pos"],
+                mask=batched_data.get("mask"),
                 cnn_lr_scale=self.args.cnn_lr_scale
             )
             # Overwrite original atom features

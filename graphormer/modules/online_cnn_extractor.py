@@ -60,43 +60,78 @@ class OnlineCNNExtractor(nn.Module):
         # (Assuming raw_image is already normalized with ImageNet mean/std internally or via dataloader)
         return self.backbone(raw_image)  # [B, 512, 7, 7]
 
-    def forward(self, raw_image, pos, cnn_lr_scale=0.1):
+    def forward(self, raw_image, pos, mask=None, cnn_lr_scale=0.1):
         """
         Args:
             raw_image: Tensor [B, 3, 224, 224]
             pos: Tensor [B, max_nodes, 2] chứa (cx, cy) chuẩn hóa [0, 1].
                  Padding values thường có thể = 0 (và node sẽ bị mask trong attention).
+            mask: Tensor [B, 224, 224] chứa ID của superpixel (0 -> N-1). Dùng cho Exact Mask Pooling.
             cnn_lr_scale: Multiplier cho learning rate scale
             
         Returns:
             features: Tensor [B, max_nodes, embed_dim]
         """
         # 1. Forward backbone
-        feat_map = self.extract_feature_map(raw_image) # [B, 512, 7, 7]
+        feat_map = self.extract_feature_map(raw_image) # [B, 512, H_feat, W_feat]
         
         # Áp dụng Gradient Multiplier để cnn_lr_scale (giảm LR cho parameters của backbone)
         feat_map = GradMultiply.apply(feat_map, cnn_lr_scale)
         
-        # 2. Grid Sample từ feat_map dựa trên pos
-        # F.grid_sample cần tọa độ range [-1, 1], (x,y) mapping
-        # pos hiện tại là [0, 1]
-        grid = pos * 2.0 - 1.0  # [B, max_nodes, 2]
-        
-        # Vì grid_sample expect grid shape [B, H_out, W_out, 2],
-        # ta squeeze shape thành [B, 1, max_nodes, 2]
-        grid = grid.unsqueeze(1) # [B, 1, N, 2]
-        
-        sampled = F.grid_sample(
-            feat_map,               # [B, 512, 7, 7]
-            grid,                   # [B, 1, N, 2]
-            mode='bilinear',
-            padding_mode='border',
-            align_corners=True
-        ) # [B, 512, 1, N]
-        
-        sampled = sampled.squeeze(2).transpose(1, 2) # [B, N, 512]
+        B, C, H_feat, W_feat = feat_map.shape
+        max_nodes = pos.size(1)
+
+        # 2. Extract features
+        if mask is not None:
+            # === Exact Mask Pooling ===
+            # Tính fallback: dự phòng trường hợp node diện tích quá nhỏ bị biến mất khi downsample
+            grid = pos * 2.0 - 1.0  # [B, max_nodes, 2]
+            grid = grid.unsqueeze(1) # [B, 1, N, 2]
+            sampled = F.grid_sample(
+                feat_map, grid, mode='bilinear', padding_mode='border', align_corners=True
+            ) # [B, C, 1, N]
+            fallback_feat = sampled.squeeze(2).transpose(1, 2) # [B, N, C]
+
+            # Resize mask xuống độ phân giải của Feature Map
+            mask_small = F.interpolate(
+                mask.unsqueeze(1).float(), 
+                size=(H_feat, W_feat), 
+                mode='nearest'
+            ).squeeze(1).long() # [B, H_feat, W_feat]
+
+            # Tạo one-hot vector cho các Node
+            node_idx = torch.arange(max_nodes, device=mask.device).view(1, -1, 1, 1) # [1, N, 1, 1]
+            is_node = (mask_small.unsqueeze(1) == node_idx) # [B, N, H_feat, W_feat]
+
+            # Lọc và tính tổng Feature Map cho từng vùng mask
+            masked_feat = feat_map.unsqueeze(1) * is_node.unsqueeze(2).float() # [B, N, C, H_feat, W_feat]
+            sum_feat = masked_feat.sum(dim=(3, 4)) # [B, N, C]
+
+            # Tính diện tích (trọng số)
+            count = is_node.sum(dim=(2, 3)).unsqueeze(2).float() # [B, N, 1]
+
+            # Chia trung bình (Average Pooling) hoặc Fallback
+            out_features = torch.where(
+                count > 0,
+                sum_feat / torch.clamp(count, min=1.0),
+                fallback_feat
+            )
+        else:
+            # === Legacy Grid Sample ===
+            grid = pos * 2.0 - 1.0  # [B, max_nodes, 2]
+            grid = grid.unsqueeze(1) # [B, 1, N, 2]
+            
+            sampled = F.grid_sample(
+                feat_map,               # [B, C, H_feat, W_feat]
+                grid,                   # [B, 1, N, 2]
+                mode='bilinear',
+                padding_mode='border',
+                align_corners=True
+            ) # [B, C, 1, N]
+            
+            out_features = sampled.squeeze(2).transpose(1, 2) # [B, N, C]
         
         # 3. Project to embedding_dim
-        out = self.projector(sampled) # [B, N, embed_dim]
+        out = self.projector(out_features) # [B, N, embed_dim]
         
         return out
