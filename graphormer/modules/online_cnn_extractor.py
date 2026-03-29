@@ -104,11 +104,11 @@ class OnlineCNNExtractor(nn.Module):
             is_node = (mask_small.unsqueeze(1) == node_idx) # [B, N, H_feat, W_feat]
 
             # Lọc và tính tổng Feature Map cho từng vùng mask
-            masked_feat = feat_map.unsqueeze(1) * is_node.unsqueeze(2).float() # [B, N, C, H_feat, W_feat]
+            masked_feat = feat_map.unsqueeze(1) * is_node.unsqueeze(2).to(feat_map.dtype) # [B, N, C, H_feat, W_feat]
             sum_feat = masked_feat.sum(dim=(3, 4)) # [B, N, C]
 
             # Tính diện tích (trọng số)
-            count = is_node.sum(dim=(2, 3)).unsqueeze(2).float() # [B, N, 1]
+            count = is_node.sum(dim=(2, 3)).unsqueeze(2).to(feat_map.dtype) # [B, N, 1]
 
             # Chia trung bình (Average Pooling) hoặc Fallback
             out_features = torch.where(
